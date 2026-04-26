@@ -2728,8 +2728,12 @@ impl SetupWizard {
                 self.settings.channels.http_port = Some(result.port);
             } else {
                 self.settings.channels.http_enabled = true;
-                self.settings.channels.http_port = Some(8080);
-                print_info("HTTP webhook enabled on port 8080 (set HTTP_WEBHOOK_SECRET in env)");
+                // Don't bake a port into the DB — let the env var (HTTP_PORT)
+                // be authoritative so orchestrators like ZeroPoint can assign ports.
+                self.settings.channels.http_port = None;
+                print_info(
+                    "HTTP webhook enabled (default port 8080, override with HTTP_PORT env var)",
+                );
             }
         } else {
             self.settings.channels.http_enabled = false;
