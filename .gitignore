@@ -51,6 +51,12 @@ trace_*.json
 .worktrees/
 .ironclaw/
 
+# ZeroPoint tenancy files (machine-local; canonical state lives on chain)
+.zp-*
+
+# macOS metadata
+.DS_Store
+
 # Python cache
 __pycache__/
 *.pyc
