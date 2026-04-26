@@ -33,5 +33,6 @@
   "tags": [
     "default",
     "messaging"
-  ]
+  ],
+  "reversibility": "irreversible"
 }

@@ -34,5 +34,6 @@
   },
   "tags": [
     "integrations"
-  ]
+  ],
+  "reversibility": "unknown"
 }

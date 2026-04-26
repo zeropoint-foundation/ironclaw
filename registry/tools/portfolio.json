@@ -37,5 +37,6 @@
   "tags": [
     "defi",
     "finance"
-  ]
+  ],
+  "reversibility": "reversible"
 }

@@ -35,5 +35,6 @@
     "default",
     "google",
     "messaging"
-  ]
+  ],
+  "reversibility": "irreversible"
 }
