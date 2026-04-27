@@ -877,10 +877,14 @@ async fn async_main() -> anyhow::Result<()> {
         gw = gw.with_log_level_handle(Arc::clone(&log_level_handle));
         gw = gw.with_tool_registry(Arc::clone(&components.tools));
         if let Some(ref db) = components.db {
-            let dispatcher = Arc::new(ironclaw::tools::dispatch::ToolDispatcher::new(
+            // `with_hooks` so channel/CLI/routine-initiated dispatches fire
+            // BeforeToolCall (and therefore the ZP gate hook), matching the
+            // agent-initiated paths.
+            let dispatcher = Arc::new(ironclaw::tools::dispatch::ToolDispatcher::with_hooks(
                 Arc::clone(&components.tools),
                 Arc::clone(&components.safety),
                 Arc::clone(db),
+                Arc::clone(&components.hooks),
             ));
             gw = gw.with_tool_dispatcher(dispatcher);
         }

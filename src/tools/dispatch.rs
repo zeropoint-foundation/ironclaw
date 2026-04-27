@@ -22,6 +22,7 @@ use uuid::Uuid;
 
 use crate::context::{ActionRecord, JobContext};
 use crate::db::Database;
+use crate::hooks::{DispatchFenceError, HookRegistry, fire_before_tool_call};
 use crate::tools::registry::ToolRegistry;
 use crate::tools::tool::{ToolError, ToolOutput};
 use crate::tools::{prepare_tool_params, redact_params};
@@ -66,10 +67,18 @@ pub struct ToolDispatcher {
     registry: Arc<ToolRegistry>,
     safety: Arc<SafetyLayer>,
     store: Arc<dyn Database>,
+    /// Lifecycle hook registry. When `Some`, every dispatch fires
+    /// `BeforeToolCall` and respects rejections (e.g. ZP gate denials).
+    /// `None` for tests / standalone fixtures that don't run the hook
+    /// system.
+    hooks: Option<Arc<HookRegistry>>,
 }
 
 impl ToolDispatcher {
-    /// Create a new dispatcher.
+    /// Create a new dispatcher with no hook fence (test/fixture form).
+    /// Production callers should use [`ToolDispatcher::with_hooks`] so
+    /// channel/CLI tool calls hit the same governance hooks as agent
+    /// tool calls.
     pub fn new(
         registry: Arc<ToolRegistry>,
         safety: Arc<SafetyLayer>,
@@ -79,6 +88,24 @@ impl ToolDispatcher {
             registry,
             safety,
             store,
+            hooks: None,
+        }
+    }
+
+    /// Create a new dispatcher that fires `BeforeToolCall` before every
+    /// tool execution. Required for ZP cognition-governance coverage of
+    /// channel/CLI/routine-initiated tool calls.
+    pub fn with_hooks(
+        registry: Arc<ToolRegistry>,
+        safety: Arc<SafetyLayer>,
+        store: Arc<dyn Database>,
+        hooks: Arc<HookRegistry>,
+    ) -> Self {
+        Self {
+            registry,
+            safety,
+            store,
+            hooks: Some(hooks),
         }
     }
 
@@ -171,6 +198,45 @@ impl ToolDispatcher {
         //    still passed to the tool itself (via normalized_params), but
         //    never appear in the audit row or the dispatch log.
         let safe_params = redact_params(&normalized_params, tool.sensitive_params());
+
+        // 3b. Fire BeforeToolCall hook for cross-channel governance
+        //     (ZP gate, etc.). Only when constructed via `with_hooks`.
+        //     Closes the channel/CLI/routine dispatch path that GAR-V1
+        //     flagged as bypassing the gate; the agent-initiated paths
+        //     (chat, job, engine v2) fire BeforeToolCall inline.
+        //
+        //     Correlation keys: dispatcher has no thread context, so
+        //     `thread_id` is None; `run_id` carries the dispatch source
+        //     so ZP's Reflector can group by routine_id, channel name,
+        //     etc.
+        if let Some(ref hooks) = self.hooks {
+            let context_label = source.to_string();
+            let run_id = match &source {
+                DispatchSource::Routine { routine_id } => Some(format!("routine:{routine_id}")),
+                DispatchSource::Channel(name) => Some(format!("channel:{name}")),
+                DispatchSource::System => Some("system".to_string()),
+            };
+            if let Err(err) = fire_before_tool_call(
+                hooks,
+                tool.as_ref(),
+                &normalized_params,
+                user_id,
+                context_label,
+                None,
+                run_id,
+            )
+            .await
+            {
+                return match err {
+                    DispatchFenceError::Rejected { reason } => Err(ToolError::ExecutionFailed(
+                        format!("Tool call rejected by hook: {reason}"),
+                    )),
+                    DispatchFenceError::Blocked(reason) => Err(ToolError::ExecutionFailed(
+                        format!("Tool call blocked by hook policy: {reason}"),
+                    )),
+                };
+            }
+        }
 
         // 4. Create a fresh system job for audit trail. Each dispatch
         //    becomes its own group of actions — sequence_num starts at 0

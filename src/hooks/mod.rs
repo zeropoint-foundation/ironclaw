@@ -14,6 +14,7 @@
 
 pub mod bootstrap;
 pub mod bundled;
+pub mod dispatch_fence;
 pub mod hook;
 pub mod registry;
 pub mod session_summary;
@@ -22,6 +23,7 @@ pub use bootstrap::{HookBootstrapSummary, bootstrap_hooks};
 pub use bundled::{
     HookBundleConfig, HookRegistrationSummary, register_bundle, register_bundled_hooks,
 };
+pub use dispatch_fence::{DispatchFenceError, fire_before_tool_call};
 pub use hook::{Hook, HookContext, HookError, HookEvent, HookFailureMode, HookOutcome, HookPoint};
 pub use registry::HookRegistry;
 pub use session_summary::SessionSummaryHook;

@@ -1129,19 +1129,22 @@ impl Agent {
                     let (notify_tx, mut notify_rx) =
                         tokio::sync::mpsc::channel::<OutgoingResponse>(32);
 
-                    let engine = Arc::new(RoutineEngine::new(
-                        rt_config.clone(),
-                        crate::tenant::SystemScope::new(Arc::clone(store)),
-                        self.llm().clone(),
-                        Arc::clone(workspace),
-                        notify_tx,
-                        Some(self.scheduler.clone()),
-                        self.deps.extension_manager.clone(),
-                        self.tools().clone(),
-                        self.safety().clone(),
-                        self.deps.sandbox_readiness,
-                        self.deps.http_interceptor.clone(),
-                    ));
+                    let engine = Arc::new(
+                        RoutineEngine::new(
+                            rt_config.clone(),
+                            crate::tenant::SystemScope::new(Arc::clone(store)),
+                            self.llm().clone(),
+                            Arc::clone(workspace),
+                            notify_tx,
+                            Some(self.scheduler.clone()),
+                            self.deps.extension_manager.clone(),
+                            self.tools().clone(),
+                            self.safety().clone(),
+                            self.deps.sandbox_readiness,
+                            self.deps.http_interceptor.clone(),
+                        )
+                        .with_hooks(self.deps.hooks.clone()),
+                    );
 
                     // Register routine tools
                     self.deps

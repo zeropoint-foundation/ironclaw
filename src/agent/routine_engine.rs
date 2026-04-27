@@ -131,6 +131,10 @@ pub struct RoutineEngine {
     /// Lightweight tool dispatches, so routine-fired tools see the
     /// same interceptor the chat path does.
     http_interceptor: Option<Arc<dyn ironclaw_llm::recording::HttpInterceptor>>,
+    /// Lifecycle hooks. When `Some`, lightweight routine tool calls fire
+    /// `BeforeToolCall` (closes the gate gap CLIC01 flagged in GAR-V1).
+    /// `None` for tests that don't need hook coverage.
+    hooks: Option<Arc<crate::hooks::HookRegistry>>,
     /// Timestamp when this engine instance was created. Used by
     /// `sync_dispatched_runs` to distinguish orphaned runs (from a previous
     /// process) from actively-watched runs (from this process).
@@ -166,8 +170,17 @@ impl RoutineEngine {
             safety,
             sandbox_readiness,
             http_interceptor,
+            hooks: None,
             boot_time: Utc::now(),
         }
+    }
+
+    /// Wire the lifecycle hook registry so lightweight routine tool calls
+    /// fire `BeforeToolCall` (and therefore the ZP cognition-governance
+    /// hook). Production callers should use this; tests can leave it unset.
+    pub fn with_hooks(mut self, hooks: Arc<crate::hooks::HookRegistry>) -> Self {
+        self.hooks = Some(hooks);
+        self
     }
 
     /// Expose the running count for integration tests.
@@ -838,6 +851,7 @@ impl RoutineEngine {
             tools: self.tools.clone(),
             safety: self.safety.clone(),
             sandbox_readiness: self.sandbox_readiness,
+            hooks: self.hooks.clone(),
             event_cache: Arc::clone(&self.event_cache),
             http_interceptor: self.http_interceptor.clone(),
         };
@@ -925,6 +939,7 @@ impl RoutineEngine {
             tools: self.tools.clone(),
             safety: self.safety.clone(),
             sandbox_readiness: self.sandbox_readiness,
+            hooks: self.hooks.clone(),
             event_cache: Arc::clone(&self.event_cache),
             http_interceptor: self.http_interceptor.clone(),
         };
@@ -978,6 +993,7 @@ impl RoutineEngine {
             tools: self.tools.clone(),
             safety: self.safety.clone(),
             sandbox_readiness: self.sandbox_readiness,
+            hooks: self.hooks.clone(),
             event_cache: Arc::clone(&self.event_cache),
             http_interceptor: self.http_interceptor.clone(),
         };
@@ -1118,6 +1134,9 @@ struct EngineContext {
     tools: Arc<ToolRegistry>,
     safety: Arc<SafetyLayer>,
     sandbox_readiness: SandboxReadiness,
+    /// Lifecycle hook registry, when present, used to fire `BeforeToolCall`
+    /// before each lightweight routine tool execution.
+    hooks: Option<Arc<crate::hooks::HookRegistry>>,
     event_cache: Arc<RwLock<Vec<EventMatcher>>>,
     /// Global HTTP interceptor (e.g., the `IRONCLAW_TEST_HTTP_REMAP`
     /// debug-only host remapper installed in `src/app.rs`). Plumbed
@@ -1810,7 +1829,9 @@ fn strip_internal_tool_call_text(text: &str) -> String {
 /// - Sequential tool execution (not parallel)
 /// - Uses the owner's live autonomous tool scope when lightweight tools are enabled
 /// - Auto-approval of non-Always tools
-/// - No hooks or approval dialogs
+/// - `BeforeToolCall` hook fires on each tool (closes the GAR-V1 routine
+///   gate gap; previous comment said "No hooks" — that was true until ZP
+///   cognition-governance work added the dispatch-fence helper).
 async fn execute_lightweight_with_tools(
     ctx: &EngineContext,
     routine: &Routine,
@@ -2045,6 +2066,31 @@ async fn execute_routine_tool(
             .collect::<Vec<_>>()
             .join("; ");
         return Err(format!("Invalid tool parameters: {}", details).into());
+    }
+
+    // Fire BeforeToolCall — closes lightweight-routine gate gap (GAR-V1).
+    // run_id is the routine run UUID set in the caller's job_ctx, so ZP's
+    // Reflector groups all tool calls in a routine run together.
+    if let Some(ref hooks) = ctx.hooks
+        && let Err(err) = crate::hooks::fire_before_tool_call(
+            hooks,
+            tool.as_ref(),
+            &normalized_params,
+            &job_ctx.user_id,
+            format!("routine-lightweight:{}", job_ctx.job_id),
+            None,
+            Some(job_ctx.job_id.to_string()),
+        )
+        .await
+    {
+        return Err(match err {
+            crate::hooks::DispatchFenceError::Rejected { reason } => {
+                format!("Tool call rejected by hook: {}", reason).into()
+            }
+            crate::hooks::DispatchFenceError::Blocked(reason) => {
+                format!("Tool call blocked by hook policy: {}", reason).into()
+            }
+        });
     }
 
     // Execute with per-tool timeout

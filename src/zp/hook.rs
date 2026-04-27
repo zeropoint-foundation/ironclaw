@@ -206,11 +206,7 @@ impl Hook for ZpHook {
                 // correlation keys for "what observation came from which run" are
                 // thread_id and run_id — Reflector queries should group by those,
                 // not walk parent chains.
-                let receipt = self
-                    .last_gate_receipt
-                    .write()
-                    .await
-                    .remove(&key_resolved);
+                let receipt = self.last_gate_receipt.write().await.remove(&key_resolved);
 
                 let Some(input) = user_input else {
                     // No matching BeforeInbound was seen for this thread (shouldn't

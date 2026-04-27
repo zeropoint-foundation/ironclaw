@@ -389,6 +389,7 @@ impl Scheduler {
                 let tools = self.tools.clone();
                 let context_manager = self.context_manager.clone();
                 let safety = self.safety.clone();
+                let hooks = self.hooks.clone();
 
                 // TODO: propagate parent job's ApprovalContext here when subtasks
                 // are used in autonomous/routine paths (currently only used in tests).
@@ -397,6 +398,7 @@ impl Scheduler {
                         tools,
                         context_manager,
                         safety,
+                        Some(hooks),
                         None,
                         tool_parent_id,
                         &tool_name,
@@ -525,10 +527,17 @@ impl Scheduler {
     ///
     /// Performs scheduler-specific checks (approval, cancellation) then
     /// delegates to the shared `execute_tool_with_safety` pipeline.
+    ///
+    /// `hooks` is `Option<Arc<HookRegistry>>` so existing test fixtures can
+    /// pass `None`; production paths pass `Some(deps.hooks.clone())` so the
+    /// BeforeToolCall hook (and therefore ZP gate coverage) fires before
+    /// the parallel subtask runs.
+    #[allow(clippy::too_many_arguments)]
     async fn execute_tool_task(
         tools: Arc<ToolRegistry>,
         context_manager: Arc<ContextManager>,
         safety: Arc<SafetyLayer>,
+        hooks: Option<Arc<crate::hooks::HookRegistry>>,
         approval_context: Option<ApprovalContext>,
         job_id: Uuid,
         tool_name: &str,
@@ -561,6 +570,35 @@ impl Scheduler {
             ApprovalContext::is_blocked_or_default(&approval_context, tool_name, requirement);
         if blocked {
             return Err(autonomous_unavailable_error(tool_name, &job_ctx.user_id).into());
+        }
+
+        // Fire BeforeToolCall — closes scheduler-subtask gate gap (GAR-V1).
+        // Run_id carries the parent job's UUID so ZP's Reflector can group
+        // parallel-fanout subtasks under the same agent run.
+        if let Some(ref hooks) = hooks
+            && let Err(err) = crate::hooks::fire_before_tool_call(
+                hooks,
+                tool.as_ref(),
+                &normalized_params,
+                &job_ctx.user_id,
+                format!("scheduler-subtask:{}", job_id),
+                None,
+                Some(job_id.to_string()),
+            )
+            .await
+        {
+            return Err(crate::error::ToolError::ExecutionFailed {
+                name: tool_name.to_string(),
+                reason: match err {
+                    crate::hooks::DispatchFenceError::Rejected { reason } => {
+                        format!("Tool call rejected by hook: {}", reason)
+                    }
+                    crate::hooks::DispatchFenceError::Blocked(reason) => {
+                        format!("Tool call blocked by hook policy: {}", reason)
+                    }
+                },
+            }
+            .into());
         }
 
         // Delegate to shared tool execution pipeline
@@ -1024,6 +1062,7 @@ mod tests {
             cm.clone(),
             safety.clone(),
             None,
+            None,
             job_id,
             "soft_gate",
             serde_json::json!({}),
@@ -1039,6 +1078,7 @@ mod tests {
             tools,
             cm,
             safety,
+            None,
             None,
             job_id,
             "hard_gate",
@@ -1060,6 +1100,7 @@ mod tests {
             tools.clone(),
             cm.clone(),
             safety.clone(),
+            None,
             Some(ApprovalContext::autonomous_with_tools([
                 "soft_gate".to_string()
             ])),
@@ -1078,6 +1119,7 @@ mod tests {
             tools,
             cm,
             safety,
+            None,
             Some(ApprovalContext::autonomous()),
             job_id,
             "hard_gate",
@@ -1104,6 +1146,7 @@ mod tests {
             tools.clone(),
             cm.clone(),
             safety.clone(),
+            None,
             Some(ctx.clone()),
             job_id,
             "soft_gate",
@@ -1116,6 +1159,7 @@ mod tests {
             tools,
             cm,
             safety,
+            None,
             Some(ctx),
             job_id,
             "hard_gate",
@@ -1189,6 +1233,7 @@ mod tests {
             Arc::new(registry),
             cm,
             safety,
+            None,
             None,
             job_id,
             "normalized_gate",
