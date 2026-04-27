@@ -54,6 +54,14 @@ pub enum HookEvent {
         user_id: String,
         /// "chat" for interactive, or a job ID string for autonomous jobs.
         context: String,
+        /// Thread ID this tool call belongs to. `None` for stateless paths.
+        #[serde(default)]
+        thread_id: Option<String>,
+        /// Per-run correlation key — turn UUID for chat, job UUID for jobs,
+        /// run UUID for routine triggers. Optional but recommended; ZP's
+        /// Reflector groups observations by this when present.
+        #[serde(default)]
+        run_id: Option<String>,
     },
     /// An outbound response about to be sent.
     Outbound {

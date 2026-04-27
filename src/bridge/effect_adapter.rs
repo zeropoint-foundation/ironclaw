@@ -1464,6 +1464,8 @@ impl EffectBridgeAdapter {
             parameters: redacted_params,
             user_id: context.user_id.clone(),
             context: format!("engine_v2:{}", context.thread_id),
+            thread_id: Some(context.thread_id.to_string()),
+            run_id: None,
         };
 
         match self.hooks.run(&hook_event).await {

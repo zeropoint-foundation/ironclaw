@@ -189,6 +189,8 @@ impl ExecutionGate for HookGate {
             parameters: redacted_params,
             user_id: ctx.user_id.to_string(),
             context: format!("gate:{}", ctx.thread_id),
+            thread_id: Some(ctx.thread_id.to_string()),
+            run_id: None,
         };
 
         match self.hooks.run(&hook_event).await {

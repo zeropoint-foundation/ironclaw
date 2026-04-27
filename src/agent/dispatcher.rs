@@ -879,6 +879,19 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
             bool, // allow_always
         )> = None;
 
+        // Synthesize a per-turn run_id from (thread_id, turn_number) once,
+        // shared across every tool call in this turn so ZP's Reflector can
+        // group causally-related observations. Turn doesn't carry a UUID,
+        // so we compose a deterministic key.
+        let run_id = {
+            let sess = self.session.lock().await;
+            sess.threads
+                .get(&self.thread_id)
+                .and_then(|t| t.last_turn())
+                .map(|tu| format!("{}#turn-{}", self.thread_id, tu.turn_number))
+        };
+        let thread_id_str = self.thread_id.to_string();
+
         for (idx, original_tc) in tool_calls.iter().enumerate() {
             let mut tc = original_tc.clone();
 
@@ -895,6 +908,8 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
                 parameters: hook_params,
                 user_id: self.message.user_id.clone(),
                 context: "chat".to_string(),
+                thread_id: Some(thread_id_str.clone()),
+                run_id: run_id.clone(),
             };
             match self.agent.hooks().run(&event).await {
                 Err(crate::hooks::HookError::Rejected { reason }) => {

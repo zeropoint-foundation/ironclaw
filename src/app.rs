@@ -1161,6 +1161,35 @@ impl AppBuilder {
                 .await;
         }
 
+        // Register ZP cognition-governance hook if IRONCLAW_ZP_ENABLED=true.
+        // No-op (not registered) for standalone runs.
+        match crate::zp::ZpConfig::from_env() {
+            Ok(Some(zp_cfg)) => match crate::zp::ZpClient::new(&zp_cfg) {
+                Ok(client) => {
+                    let base_url = zp_cfg.base_url.clone();
+                    let hook = Arc::new(crate::zp::ZpHook::new(Arc::new(client)));
+                    hooks.register(hook).await;
+                    tracing::info!(
+                        base_url = %base_url,
+                        "ZP cognition-governance hook registered"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to construct ZP client; cognition-governance disabled"
+                    );
+                }
+            },
+            Ok(None) => {} // disabled — env var unset/false or token missing
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to read ZP config from env; cognition-governance disabled"
+                );
+            }
+        }
+
         let agent_session_manager =
             Arc::new(AgentSessionManager::new().with_hooks(Arc::clone(&hooks)));
 

@@ -596,6 +596,8 @@ Report when the job is complete or if you encounter issues you cannot resolve."#
                 parameters: hook_params,
                 user_id: job_ctx.user_id.clone(),
                 context: format!("job:{}", job_id),
+                thread_id: None,
+                run_id: Some(job_id.to_string()),
             };
             match deps.hooks.run(&event).await {
                 Err(HookError::Rejected { reason }) => {
