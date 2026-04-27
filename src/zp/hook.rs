@@ -143,6 +143,23 @@ impl Hook for ZpHook {
                             let key = (user_id.clone(), thread_id.clone());
                             self.last_gate_receipt.write().await.insert(key, rid);
                         }
+                        // Migrate any (user_id, None) input cache to the resolved
+                        // thread_id. BeforeInbound often fires before the channel
+                        // resolves a thread (so it caches under None); by
+                        // BeforeToolCall the thread is established. Without this
+                        // promotion, TransformResponse — which always sees a
+                        // resolved thread_id — would miss the cached input under
+                        // (user_id, None) and silently skip the observation.
+                        if thread_id.is_some() {
+                            let mut cache = self.last_user_input.write().await;
+                            let key_none = (user_id.clone(), None);
+                            let key_resolved = (user_id.clone(), thread_id.clone());
+                            if !cache.contains_key(&key_resolved)
+                                && let Some(input) = cache.remove(&key_none)
+                            {
+                                cache.insert(key_resolved, input);
+                            }
+                        }
                         Ok(HookOutcome::ok())
                     }
                     Err(ZpError::Auth { status }) => {
@@ -166,15 +183,34 @@ impl Hook for ZpHook {
                 thread_id,
                 response,
             } => {
-                let key = (user_id.clone(), Some(thread_id.clone()));
-                let user_input = self.last_user_input.write().await.remove(&key);
+                // Try the resolved-thread key first, then fall back to the
+                // None-thread key. BeforeInbound caches whatever thread_id the
+                // channel layer provides; for many channels (web gateway, REPL)
+                // the thread isn't resolved until the agent loop creates one,
+                // so the inbound side caches under (user_id, None). The
+                // BeforeToolCall arm above migrates (user_id, None) →
+                // (user_id, Some(thread_id)) when a tool fires, but turns
+                // without tool calls never trigger that migration — so the
+                // fallback below is required for text-only turns.
+                let key_resolved = (user_id.clone(), Some(thread_id.clone()));
+                let key_none = (user_id.clone(), None);
+                let user_input = {
+                    let mut cache = self.last_user_input.write().await;
+                    cache
+                        .remove(&key_resolved)
+                        .or_else(|| cache.remove(&key_none))
+                };
                 // SAFETY: chain_parent_receipt_id is a heuristic, not authoritative.
                 // Single-tool turns: the only gate, exact parent. Multi-tool turns:
                 // the closest-in-time predecessor (last gate). The rigorous
                 // correlation keys for "what observation came from which run" are
                 // thread_id and run_id — Reflector queries should group by those,
                 // not walk parent chains.
-                let receipt = self.last_gate_receipt.write().await.remove(&key);
+                let receipt = self
+                    .last_gate_receipt
+                    .write()
+                    .await
+                    .remove(&key_resolved);
 
                 let Some(input) = user_input else {
                     // No matching BeforeInbound was seen for this thread (shouldn't
