@@ -11,8 +11,15 @@
 //!   `chain_parent_receipt_id` (heuristic — see comment below).
 //!
 //! Failure mode is fail-open: any non-auth ZP error logs at debug and
-//! returns `HookOutcome::ok()`. Auth failures (401/403) disable the hook
-//! for the rest of the process via an internal flag.
+//! returns `HookOutcome::Reject` with a clear "ZP unreachable" message —
+//! degrade-CLOSED. Auth failures (401/403) similarly reject AND disable
+//! the hook for the rest of the process via an internal flag, so a
+//! single re-attempt doesn't keep hitting auth.
+//!
+//! See zeropoint task #91 for the load-bearing-honesty rationale: a
+//! substrate that silently degrades open is worse than one that surfaces
+//! the failure to the operator. Brief zp-server outages will block tool
+//! dispatch until the server returns; that is the intended behavior.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -87,10 +94,20 @@ impl Hook for ZpHook {
     }
 
     fn failure_mode(&self) -> HookFailureMode {
-        // Per CLIC01 brief: degrade-open. ZP transport / 5xx / timeout
-        // never blocks the agent loop. Gate denials are signaled via the
-        // `Reject` outcome below, NOT via the failure mode.
-        HookFailureMode::FailOpen
+        // Degrade-CLOSED. If the ZP hook itself errors (panic, etc.), the
+        // governed tool call is BLOCKED. This is deliberate: a substrate
+        // that "almost works" is worse than one that's honest about its
+        // coverage. Better to surface the failure to the operator than to
+        // silently dispatch ungoverned tool calls that look governed.
+        //
+        // Companion behavior in execute(): transport / 5xx errors return
+        // HookOutcome::Reject with a clear "ZP unreachable" message rather
+        // than silently continuing.
+        //
+        // Operational implication for Foundation members: brief zp-server
+        // outages will block tool dispatch until the server returns. This
+        // is the correct behavior — see ZP task #91 for the full rationale.
+        HookFailureMode::FailClosed
     }
 
     async fn execute(
@@ -163,17 +180,22 @@ impl Hook for ZpHook {
                         Ok(HookOutcome::ok())
                     }
                     Err(ZpError::Auth { status }) => {
-                        tracing::warn!(
+                        tracing::error!(
                             status,
-                            "zp gate authentication failed; disabling cognition-governance hook \
-                             for this session"
+                            "zp gate auth failed; refusing to dispatch ungoverned tool call"
                         );
                         self.disable();
-                        Ok(HookOutcome::ok())
+                        Ok(HookOutcome::reject(format!(
+                            "ZP gate authentication failed (status {status}). Cannot govern this tool call. \
+                             Re-onboard or refresh ZP_SESSION_TOKEN, then retry."
+                        )))
                     }
                     Err(e) => {
-                        tracing::debug!(error = %e, "zp gate call failed; degrading open");
-                        Ok(HookOutcome::ok())
+                        tracing::error!(error = %e, "zp gate unreachable; refusing to dispatch ungoverned tool call");
+                        Ok(HookOutcome::reject(format!(
+                            "ZP gate unreachable: {e}. Refusing to dispatch ungoverned tool call. \
+                             Check zp-server is running (zp serve --port 17010), then retry."
+                        )))
                     }
                 }
             }
