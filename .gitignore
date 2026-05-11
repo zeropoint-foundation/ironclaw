@@ -4,6 +4,11 @@
 .env.*
 !.env.example
 
+# .zp-configure.toml is the public ZP manifest (Foundation reference implementation).
+# Tracked even if a global gitignore would normally exclude it — see
+# zeropoint/docs/PUBLIC-PRIVATE-SEPARATION-2026-05.md for context.
+!.zp-configure.toml
+
 # macOS metadata
 .DS_Store
 
