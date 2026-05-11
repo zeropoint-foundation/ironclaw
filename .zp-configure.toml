@@ -1,0 +1,167 @@
+# .zp-configure.toml — IronClaw
+# Minimum Viable Credentials manifest for ZeroPoint autoconfigure
+#
+# IronClaw is a multi-channel AI agent (CLI, Slack, Telegram, Signal, HTTP).
+# It uses a backend selector pattern (LLM_BACKEND=openai|anthropic|ollama|...)
+# rather than populating all provider vars. Only ONE provider is active at a time.
+#
+# ZeroPoint Foundation deployment: OpenAI is the primary backend. NEAR AI has been
+# removed from the preference list — the Foundation does not route inference
+# through NEAR AI's hosted service. See docs/PUBLIC-PRIVATE-SEPARATION-2026-05.md
+# in the zeropoint repo for the broader provider strategy.
+
+[tool]
+name = "IronClaw"
+version = "0.1"
+description = "Multi-channel AI agent with CLI, Slack, Telegram, Signal, and HTTP interfaces"
+
+# ── Capability envelope (for ZP gate / F5) ─────────────────
+# Tool-as-a-whole reversibility. `partial` because some agent
+# actions are read-only (web_search, llm_context) but many are
+# not (sending email, posting Slack/Telegram, writing to GitHub).
+# ZP treats `partial` as `irreversible` for gating today;
+# per-tool reversibility lives on each registry/tools/*.json.
+[capabilities]
+reversibility = "partial"
+
+# ── Required capabilities ──────────────────────────────────
+
+[[required]]
+capability = "reasoning_llm"
+env_vars = ["LLM_BACKEND"]
+prefer = ["openai", "anthropic", "ollama"]
+notes = """
+IronClaw uses a BACKEND SELECTOR PATTERN — unlike PentAGI/OpenMAIC which populate
+provider-specific env blocks, IronClaw sets LLM_BACKEND to choose ONE provider,
+then only that provider's vars matter.
+
+ZeroPoint Foundation v1 chooses OpenAI as the primary backend. Anthropic is
+available as a fallback. Ollama remains as a local-sovereignty alternative.
+NEAR AI is intentionally removed in its entirety — preference list AND
+backend_groups definition both gone. The Foundation does not depend on
+NEAR AI's hosted inference for any path.
+
+NEW MANIFEST CONCEPT: backend_selector — tells the engine that resolving this
+capability means setting a selector var, then populating only the selected
+provider's env block.
+
+Supported backends: openai, anthropic, ollama, openai_compatible, tinfoil,
+openai_codex, minimax.
+
+openai_compatible is a meta-backend that works with OpenRouter, Together,
+Fireworks, LM Studio, vLLM, etc. via LLM_BASE_URL + LLM_API_KEY.
+"""
+
+# Backend-specific var groups — only the selected backend's vars get populated
+[[required.backend_groups]]
+backend = "anthropic"
+env_vars = ["ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "ANTHROPIC_BASE_URL"]
+defaults = { ANTHROPIC_MODEL = "claude-sonnet-4-20250514", ANTHROPIC_BASE_URL = "https://api.anthropic.com" }
+
+[[required.backend_groups]]
+backend = "openai"
+env_vars = ["OPENAI_API_KEY"]
+defaults = {}
+
+[[required.backend_groups]]
+backend = "ollama"
+env_vars = ["OLLAMA_MODEL", "OLLAMA_BASE_URL"]
+defaults = { OLLAMA_MODEL = "llama3.2", OLLAMA_BASE_URL = "http://localhost:11434" }
+
+[[required.backend_groups]]
+backend = "openai_compatible"
+env_vars = ["LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"]
+notes = """
+Meta-backend for OpenRouter, Together, Fireworks, LM Studio, vLLM, etc.
+This is where aggregator/deluxe mode shines — set LLM_BASE_URL to the
+aggregator endpoint and LLM_API_KEY to the aggregator key.
+"""
+
+[[required]]
+capability = "database"
+env_vars = ["DATABASE_URL", "DATABASE_POOL_SIZE"]
+local_default = true
+defaults = { DATABASE_URL = "postgres://localhost/ironclaw", DATABASE_POOL_SIZE = "10" }
+notes = "PostgreSQL required. Local default works for development."
+
+# ── Optional capabilities ──────────────────────────────────
+
+[[optional]]
+capability = "messaging_slack"
+env_vars = ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_SIGNING_SECRET"]
+attention = """
+NEW CAPABILITY DISCOVERED: messaging channels.
+Slack, Telegram, Signal, HTTP webhook — these are communication integrations,
+not AI capabilities. They need their own credential category.
+The engine should flag these as needs_attention since they require
+app creation in each platform's developer console.
+"""
+
+[[optional]]
+capability = "messaging_telegram"
+env_vars = ["TELEGRAM_BOT_TOKEN"]
+attention = "Requires creating a bot via @BotFather on Telegram."
+
+[[optional]]
+capability = "messaging_signal"
+env_vars = ["SIGNAL_HTTP_URL", "SIGNAL_ACCOUNT"]
+attention = "Requires running signal-cli daemon separately."
+
+[[optional]]
+capability = "code_execution"
+env_vars = ["SANDBOX_ENABLED", "SANDBOX_POLICY", "SANDBOX_IMAGE"]
+defaults = { SANDBOX_ENABLED = "true", SANDBOX_POLICY = "readonly" }
+notes = "Docker-based sandboxed code execution. Config vars, not credentials."
+
+# ── Auto-generatable secrets ───────────────────────────────
+
+[auto_generate]
+secrets = [
+    "HTTP_WEBHOOK_SECRET",
+]
+
+# ── Aggregator / Deluxe mode ──────────────────────────────
+
+[deluxe]
+prefer_aggregator = true
+aggregator_backend = "openai_compatible"
+notes = """
+In deluxe mode, set LLM_BACKEND=openai_compatible and point
+LLM_BASE_URL to the aggregator endpoint. This routes all LLM
+traffic through the aggregator with one key.
+"""
+
+# ── Provider-specific mappings ─────────────────────────────
+
+[[provider_overrides]]
+provider = "anthropic"
+env_map = { LLM_BACKEND = "anthropic", ANTHROPIC_API_KEY = "${vault:anthropic/api_key}", ANTHROPIC_MODEL = "claude-sonnet-4-20250514" }
+
+[[provider_overrides]]
+provider = "openai"
+env_map = { LLM_BACKEND = "openai", OPENAI_API_KEY = "${vault:openai/api_key}" }
+
+[[provider_overrides]]
+provider = "openrouter"
+env_map = { LLM_BACKEND = "openai_compatible", LLM_API_KEY = "${vault:openrouter/api_key}", LLM_BASE_URL = "https://openrouter.ai/api/v1", LLM_MODEL = "anthropic/claude-sonnet-4" }
+
+[[provider_overrides]]
+provider = "abacus"
+env_map = { LLM_BACKEND = "openai_compatible", LLM_API_KEY = "${vault:abacus/api_key}", LLM_BASE_URL = "https://api.abacus.ai/v0/openai", LLM_MODEL = "auto" }
+
+[[provider_overrides]]
+provider = "together"
+env_map = { LLM_BACKEND = "openai_compatible", LLM_API_KEY = "${vault:together/api_key}", LLM_BASE_URL = "https://api.together.xyz/v1", LLM_MODEL = "meta-llama/Llama-3.3-70B-Instruct-Turbo" }
+
+[[provider_overrides]]
+provider = "ollama"
+env_map = { LLM_BACKEND = "ollama", OLLAMA_MODEL = "llama3.2", OLLAMA_BASE_URL = "http://localhost:11434" }
+
+# ── Universal launch spec ─────────────────────────────────────
+# Used by `zp run ironclaw`. Vault refs are FORBIDDEN here — only
+# allowed in [[provider_overrides]] env_map above.
+
+[launch]
+command = "cargo"
+args = ["run", "--release", "--", "run", "--cli-only"]
+working_dir = "."
