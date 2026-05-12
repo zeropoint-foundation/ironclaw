@@ -56,7 +56,7 @@ pub use registry::{RegistryCommand, run_registry_command};
 pub use routines::{RoutinesCommand, run_routines_command};
 pub use service::{ServiceCommand, run_service_command};
 pub use skills::{SkillsCommand, run_skills_command};
-pub use status::run_status_command;
+pub use status::{StatusCommand, run_runtime_status_command, run_status_command};
 pub use tool::{ToolCommand, run_tool_command};
 
 use std::sync::Arc;
@@ -300,9 +300,12 @@ pub enum Command {
     /// Show system health and diagnostics
     #[command(
         about = "Show system status",
-        long_about = "Displays health and diagnostics info.\nExample: ironclaw status"
+        long_about = "Displays health and diagnostics info.\nExample: ironclaw status\n\
+                      Add --runtime for the resolved view a running gateway would use,\n\
+                      including the resolved auth posture (OBSERVABILITY-2026-05.md \
+                      principles #3 and #6).\nExample: ironclaw status --runtime"
     )]
-    Status,
+    Status(StatusCommand),
 
     /// Generate shell completion scripts
     #[command(

@@ -211,8 +211,11 @@ async fn async_main() -> anyhow::Result<()> {
             init_cli_tracing();
             return ironclaw::cli::run_doctor_command().await;
         }
-        Some(Command::Status) => {
+        Some(Command::Status(status_cmd)) => {
             init_cli_tracing();
+            if status_cmd.runtime {
+                return ironclaw::cli::run_runtime_status_command().await;
+            }
             return run_status_command().await;
         }
         Some(Command::Completion(completion)) => {
@@ -1122,6 +1125,7 @@ async fn async_main() -> anyhow::Result<()> {
                 .or_else(|| config.tunnel.public_url.clone()),
             tunnel_provider: active_tunnel.as_ref().map(|t| t.name().to_string()),
             startup_elapsed: Some(startup_start.elapsed()),
+            auth: ironclaw::boot_screen::AuthPosture::from_config(&config),
         };
         ironclaw::boot_screen::print_boot_screen(&boot_info);
     }

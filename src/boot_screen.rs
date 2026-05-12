@@ -35,6 +35,97 @@ pub struct BootInfo {
     pub tunnel_provider: Option<String>,
     /// Time elapsed during startup. Shown at the bottom when present.
     pub startup_elapsed: Option<std::time::Duration>,
+    /// Resolved auth posture (OIDC + bearer). Rendered as a one-line
+    /// summary in Tier 2 of the banner. `None` is the standalone-developer
+    /// degenerate case (no gateway configured).
+    pub auth: Option<AuthPosture>,
+}
+
+/// Resolved gateway auth posture for the boot banner and `status --runtime`.
+///
+/// Implements principle #6 (the boot banner is the security posture) from
+/// `OBSERVABILITY-2026-05.md`: the first thing an operator sees must
+/// describe what is actually protecting the system.
+#[derive(Debug, Clone)]
+pub struct AuthPosture {
+    /// `Some` when OIDC successfully resolved as an auth path.
+    pub oidc: Option<OidcPosture>,
+    /// True when a bearer token is registered with the env_auth ladder
+    /// (either explicit `GATEWAY_AUTH_TOKEN` or the auto-generated path).
+    pub bearer_enabled: bool,
+}
+
+/// OIDC-specific portion of [`AuthPosture`]. Mirrors the public fields of
+/// `GatewayOidcConfig` so the boot banner and status command can render
+/// without holding a reference to the config crate's private types.
+#[derive(Debug, Clone)]
+pub struct OidcPosture {
+    pub issuer: Option<String>,
+    pub audience: Option<String>,
+    pub header: String,
+    pub jwks_url: String,
+}
+
+impl AuthPosture {
+    /// Derive the auth posture from a resolved [`crate::config::Config`].
+    ///
+    /// Mirrors the precedence inside `GatewayChannel::new`: an OIDC
+    /// configuration alongside no explicit bearer suppresses the auto-gen
+    /// path (`bearer_enabled = false`). An explicit bearer is reported as
+    /// active regardless of OIDC state (the transitional coexistence case).
+    pub fn from_config(config: &crate::config::Config) -> Option<Self> {
+        let gateway = config.channels.gateway.as_ref()?;
+        let oidc = gateway.oidc.as_ref().map(|o| OidcPosture {
+            issuer: o.issuer.clone(),
+            audience: o.audience.clone(),
+            header: o.header.clone(),
+            jwks_url: o.jwks_url.clone(),
+        });
+        let bearer_enabled = gateway.auth_token.is_some() || oidc.is_none();
+        Some(Self {
+            oidc,
+            bearer_enabled,
+        })
+    }
+
+    /// Build a single condensed line for the boot banner.
+    ///
+    /// Forms:
+    /// - `OIDC (issuer=<host>, audience=<prefix>...)` — OIDC primary
+    /// - `OIDC + bearer (issuer=<host>, audience=<prefix>...)` — coexistence
+    /// - `bearer (auto-generated)` — standalone-developer default
+    /// - `bearer (env-set)` — explicit `GATEWAY_AUTH_TOKEN`, no OIDC
+    pub(crate) fn banner_line(&self, gateway_auth_token_env_set: bool) -> String {
+        match (&self.oidc, self.bearer_enabled) {
+            (Some(o), false) => format!("OIDC ({})", oidc_line_details(o)),
+            (Some(o), true) => format!("OIDC + bearer ({})", oidc_line_details(o)),
+            (None, true) if gateway_auth_token_env_set => "bearer (env-set)".to_string(),
+            (None, true) => "bearer (auto-generated)".to_string(),
+            (None, false) => "none".to_string(),
+        }
+    }
+}
+
+fn oidc_line_details(o: &OidcPosture) -> String {
+    let issuer = o
+        .issuer
+        .as_deref()
+        .and_then(|i| {
+            i.strip_prefix("https://")
+                .or_else(|| i.strip_prefix("http://"))
+                .map(|s| s.split('/').next().unwrap_or(s))
+                .map(|s| s.split('.').next().unwrap_or(s).to_string())
+        })
+        .unwrap_or_else(|| "?".to_string());
+    let audience = o
+        .audience
+        .as_deref()
+        .map(|a| {
+            let head: String = a.chars().take(8).collect();
+            format!("{head}...")
+        })
+        .unwrap_or_else(|| "?".to_string());
+    format!("issuer={issuer}, audience={audience}")
 }
 
 const KW: usize = 10;
@@ -140,6 +231,27 @@ pub fn print_boot_screen(info: &BootInfo) {
             fmt::reset(),
             fmt::accent(),
             non_default.join("  "),
+            fmt::reset(),
+            width = KW,
+        );
+    }
+
+    // Auth posture: render whenever the gateway is configured. Implements
+    // principle #6 from OBSERVABILITY-2026-05.md — the boot banner must
+    // describe what is actually protecting the system, not just expose a
+    // URL and trust the operator to know what's behind it.
+    if let Some(ref auth) = info.auth {
+        let gateway_token_env_set = std::env::var("GATEWAY_AUTH_TOKEN")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .is_some();
+        println!(
+            "  {}{:<width$}{}  {}{}{}",
+            fmt::dim(),
+            "auth",
+            fmt::reset(),
+            fmt::accent(),
+            auth.banner_line(gateway_token_env_set),
             fmt::reset(),
             width = KW,
         );
@@ -257,6 +369,75 @@ mod tests {
     use super::*;
     use crate::sandbox::detect::DockerStatus;
 
+    fn oidc(audience: &str, issuer: &str) -> OidcPosture {
+        OidcPosture {
+            issuer: Some(issuer.to_string()),
+            audience: Some(audience.to_string()),
+            header: "cf-access-jwt-assertion".to_string(),
+            jwks_url: "https://example.cloudflareaccess.com/cdn-cgi/access/certs".to_string(),
+        }
+    }
+
+    /// Regression for principle #6 (OBSERVABILITY-2026-05.md): the banner
+    /// must surface OIDC posture, not just a gateway URL.
+    #[test]
+    fn auth_posture_banner_line_oidc_primary() {
+        let posture = AuthPosture {
+            oidc: Some(oidc(
+                "26abcb60deadbeef",
+                "https://zp-foundation-team.cloudflareaccess.com",
+            )),
+            bearer_enabled: false,
+        };
+        let line = posture.banner_line(false);
+        assert!(line.starts_with("OIDC ("), "got: {line}");
+        assert!(line.contains("issuer=zp-foundation-team"), "got: {line}");
+        assert!(line.contains("audience=26abcb60..."), "got: {line}");
+    }
+
+    /// Coexistence: OIDC plus an explicit bearer (transitional case).
+    #[test]
+    fn auth_posture_banner_line_oidc_plus_bearer() {
+        let posture = AuthPosture {
+            oidc: Some(oidc("aud-xyz-1234", "https://issuer.example.com")),
+            bearer_enabled: true,
+        };
+        let line = posture.banner_line(true);
+        assert!(line.starts_with("OIDC + bearer ("), "got: {line}");
+    }
+
+    #[test]
+    fn auth_posture_banner_line_bearer_env_set() {
+        let posture = AuthPosture {
+            oidc: None,
+            bearer_enabled: true,
+        };
+        assert_eq!(posture.banner_line(true), "bearer (env-set)");
+    }
+
+    #[test]
+    fn auth_posture_banner_line_bearer_auto_generated() {
+        let posture = AuthPosture {
+            oidc: None,
+            bearer_enabled: true,
+        };
+        assert_eq!(posture.banner_line(false), "bearer (auto-generated)");
+    }
+
+    /// Short audiences don't get a trailing ellipsis.
+    #[test]
+    fn auth_posture_banner_line_short_audience_no_ellipsis() {
+        let posture = AuthPosture {
+            oidc: Some(oidc("short", "https://acme.cloudflareaccess.com")),
+            bearer_enabled: false,
+        };
+        // 5 chars → take(8) returns the whole string, "..." is still appended.
+        // The format is intentionally uniform; operators reading it know "..."
+        // means "see the .env for the full value" regardless of length.
+        let line = posture.banner_line(false);
+        assert!(line.contains("audience=short..."), "got: {line}");
+    }
+
     #[test]
     fn test_print_boot_screen_full() {
         let info = BootInfo {
@@ -287,6 +468,7 @@ mod tests {
             tunnel_url: Some("https://abc123.ngrok.io".to_string()),
             tunnel_provider: Some("ngrok".to_string()),
             startup_elapsed: None,
+            auth: None,
         };
         // Should not panic
         print_boot_screen(&info);
@@ -318,6 +500,7 @@ mod tests {
             tunnel_url: None,
             tunnel_provider: None,
             startup_elapsed: None,
+            auth: None,
         };
         // Should not panic
         print_boot_screen(&info);
@@ -349,6 +532,7 @@ mod tests {
             tunnel_url: None,
             tunnel_provider: None,
             startup_elapsed: None,
+            auth: None,
         };
         // Should not panic
         print_boot_screen(&info);

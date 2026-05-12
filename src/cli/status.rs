@@ -2,12 +2,30 @@
 //!
 //! Checks database connectivity, session validity, embeddings,
 //! WASM runtime, tool count, and channel availability.
+//!
+//! The `--runtime` flag produces the resolved view a running gateway
+//! would use — implements principles #3 (state should be queryable) and
+//! #6 (boot banner is the security posture) from
+//! `docs/OBSERVABILITY-2026-05.md`.
 
 use std::path::PathBuf;
 
+use clap::Args;
+
+use crate::boot_screen::{AuthPosture, OidcPosture};
 use crate::bootstrap::ironclaw_base_dir;
 use crate::cli::fmt;
 use crate::settings::Settings;
+
+/// Arguments for the `ironclaw status` subcommand.
+#[derive(Args, Debug, Clone)]
+pub struct StatusCommand {
+    /// Show the resolved runtime view (auth posture, full config) rather
+    /// than the static config-file view. Mirrors what a running gateway
+    /// would use.
+    #[arg(long)]
+    pub runtime: bool,
+}
 
 /// Load settings from JSON and TOML config files, matching the runtime
 /// priority: TOML overlay > settings.json > defaults.
@@ -292,6 +310,176 @@ fn default_tools_dir() -> PathBuf {
 
 fn default_channels_dir() -> PathBuf {
     ironclaw_base_dir().join("channels")
+}
+
+/// Render the `--runtime` view: the resolved config a running gateway
+/// would use, plus the auth posture inferred from that config.
+///
+/// Implements principles #3 and #6 from `OBSERVABILITY-2026-05.md`.
+/// Closes failure mode F4 (boot banner doesn't reflect auth posture).
+pub async fn run_runtime_status_command() -> anyhow::Result<()> {
+    let config = crate::config::Config::from_env()
+        .await
+        .map_err(|e| anyhow::anyhow!("config resolve: {e}"))?;
+
+    println!();
+    println!("  {}IronClaw Status (runtime){}", fmt::bold(), fmt::reset());
+    println!();
+
+    // Version + PID + uptime
+    println!(
+        "{}",
+        fmt::kv_line("Version", &format!("v{}", env!("CARGO_PKG_VERSION")), 14,)
+    );
+
+    if let Some((pid, uptime)) = read_pid_and_uptime() {
+        println!(
+            "{}",
+            fmt::kv_line("Daemon PID", &format!("{pid} (up {uptime})"), 14)
+        );
+    } else {
+        println!(
+            "{}",
+            fmt::kv_line("Daemon PID", "not running (no pid lock)", 14)
+        );
+    }
+
+    // CLI mode + model
+    let cli_mode = if config.channels.tui.is_some() {
+        "tui"
+    } else if config.channels.cli.enabled {
+        "repl"
+    } else {
+        "headless"
+    };
+    let logs_note = if cli_mode == "tui" {
+        " (logs at ~/.ironclaw/logs/)"
+    } else {
+        ""
+    };
+    println!(
+        "{}",
+        fmt::kv_line("CLI mode", &format!("{cli_mode}{logs_note}"), 14)
+    );
+
+    // Model: pulled from settings rather than the per-provider config
+    // subtree — the latter is structurally provider-specific and not
+    // worth a runtime lookup for a status print.
+    let settings = load_settings();
+    let model_display = settings
+        .selected_model
+        .clone()
+        .unwrap_or_else(|| "(per-backend default)".to_string());
+    println!(
+        "{}",
+        fmt::kv_line(
+            "Model",
+            &format!("{model_display} via {}", config.llm.backend),
+            14,
+        )
+    );
+
+    // Gateway
+    if let Some(ref gateway) = config.channels.gateway {
+        println!(
+            "{}",
+            fmt::kv_line(
+                "Gateway",
+                &format!("http://{}:{}/", gateway.host, gateway.port),
+                14,
+            )
+        );
+    } else {
+        println!("{}", fmt::kv_line("Gateway", "disabled", 14));
+    }
+
+    // Auth posture — the core surface of principle #6
+    println!();
+    println!("  {}Auth:{}", fmt::bold(), fmt::reset());
+    if let Some(posture) = AuthPosture::from_config(&config) {
+        print_auth_posture(&posture);
+    } else {
+        println!("    (gateway not configured)");
+    }
+
+    Ok(())
+}
+
+fn print_auth_posture(posture: &AuthPosture) {
+    if let Some(ref oidc) = posture.oidc {
+        println!("    OIDC:        enabled");
+        print_oidc_details(oidc);
+    } else {
+        println!("    OIDC:        disabled");
+    }
+    let bearer_note = if posture.bearer_enabled {
+        if posture.oidc.is_some() {
+            "enabled (coexists with OIDC; see #116)"
+        } else if std::env::var("GATEWAY_AUTH_TOKEN")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .is_some()
+        {
+            "enabled (env-set)"
+        } else {
+            "enabled (auto-generated)"
+        }
+    } else {
+        "disabled (OIDC primary)"
+    };
+    println!("    Bearer:      {bearer_note}");
+}
+
+fn print_oidc_details(oidc: &OidcPosture) {
+    if let Some(ref issuer) = oidc.issuer {
+        println!("      issuer:    {issuer}");
+    }
+    if let Some(ref audience) = oidc.audience {
+        // Show a prefix only — full audience can be long and lock-screen
+        // visible during pair programming. Operators who want the full
+        // value can read it out of ~/.ironclaw/.env.
+        let head: String = audience.chars().take(12).collect();
+        let suffix = if audience.chars().count() > 12 {
+            "..."
+        } else {
+            ""
+        };
+        println!("      audience:  {head}{suffix}");
+    }
+    println!("      header:    {}", oidc.header);
+    println!("      jwks_url:  {}", oidc.jwks_url);
+}
+
+/// Read `~/.ironclaw/ironclaw.pid` and report its content plus a coarse
+/// uptime derived from the file's mtime. Returns `None` when the PID
+/// file is absent or unreadable.
+///
+/// Liveness is not checked here — a stale pid file from a crashed
+/// daemon will display a stale PID. Operators querying `status
+/// --runtime` should treat the PID as advisory; a hard liveness check
+/// belongs in `ironclaw doctor` where the process-table dep is
+/// already paid for.
+fn read_pid_and_uptime() -> Option<(u32, String)> {
+    let pid_path = crate::bootstrap::pid_lock_path();
+    let pid: u32 = std::fs::read_to_string(&pid_path)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    let mtime = std::fs::metadata(&pid_path).ok()?.modified().ok()?;
+    let elapsed = mtime.elapsed().ok()?;
+    Some((pid, format_uptime(elapsed)))
+}
+
+fn format_uptime(d: std::time::Duration) -> String {
+    let total = d.as_secs();
+    let hours = total / 3600;
+    let mins = (total % 3600) / 60;
+    if hours > 0 {
+        format!("{hours}h{mins:02}m")
+    } else {
+        format!("{mins}m")
+    }
 }
 
 #[cfg(test)]
