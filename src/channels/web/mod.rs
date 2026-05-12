@@ -112,14 +112,6 @@ impl GatewayChannel {
     /// If no auth token is configured, generates a random one and prints it.
     /// Builds a single-user `MultiAuthState` from the config.
     pub fn new(config: GatewayConfig, owner_id: String) -> Self {
-        let auth_token = config.auth_token.clone().unwrap_or_else(|| {
-            use rand::RngCore;
-            use rand::rngs::OsRng;
-            let mut bytes = [0u8; 32];
-            OsRng.fill_bytes(&mut bytes);
-            bytes.iter().map(|b| format!("{b:02x}")).collect()
-        });
-
         let oidc_state = config.oidc.as_ref().and_then(|oidc_config| {
             match auth::OidcState::from_config(oidc_config) {
                 Ok(state) => {
@@ -137,8 +129,28 @@ impl GatewayChannel {
             }
         });
 
+        // Bearer-token ladder: only auto-generate when neither an explicit
+        // token nor a working OIDC state is in play. With OIDC enabled the
+        // ladder is left empty so `auth_middleware` falls through to OIDC,
+        // closing the gap from failure F5 in OBSERVABILITY-2026-05.md
+        // (the SPA's stale localStorage bearer could otherwise authenticate
+        // without OIDC ever running).
+        let env_auth = if config.auth_token.is_some() || oidc_state.is_none() {
+            let auth_token = config.auth_token.clone().unwrap_or_else(|| {
+                use rand::RngCore;
+                use rand::rngs::OsRng;
+                let mut bytes = [0u8; 32];
+                OsRng.fill_bytes(&mut bytes);
+                bytes.iter().map(|b| format!("{b:02x}")).collect()
+            });
+            MultiAuthState::single(auth_token, owner_id.clone())
+        } else {
+            tracing::info!("Bearer token disabled: OIDC enabled as primary auth");
+            MultiAuthState::empty()
+        };
+
         let auth = CombinedAuthState {
-            env_auth: MultiAuthState::single(auth_token, owner_id.clone()),
+            env_auth,
             db_auth: None,
             oidc: oidc_state,
             oidc_allowed_domains: Vec::new(),

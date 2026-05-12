@@ -129,6 +129,22 @@ impl MultiAuthState {
         }
     }
 
+    /// Create an auth state with no registered bearer tokens.
+    ///
+    /// Used when OIDC is the configured primary auth path: the bearer
+    /// ladder has nothing to match, so `auth_middleware` falls through
+    /// to the OIDC check. Implements principle #4 (convergent paths,
+    /// convergent observability) from `OBSERVABILITY-2026-05.md`: an
+    /// auto-generated bearer alongside OIDC is a divergent observable
+    /// behavior (the SPA's stale localStorage token would authenticate
+    /// without OIDC ever running).
+    pub fn empty() -> Self {
+        Self {
+            hashed_tokens: Vec::new(),
+            display_token: None,
+        }
+    }
+
     /// Create a multi-user auth state from a map of tokens to identities.
     ///
     /// **Test-only** — production multi-user auth is DB-backed via
@@ -1182,6 +1198,18 @@ mod tests {
         let identity = state.authenticate("tok-123");
         assert!(identity.is_some());
         assert_eq!(identity.unwrap().user_id, "alice");
+    }
+
+    /// Regression for principle #4 (convergent paths, convergent
+    /// observability) from `OBSERVABILITY-2026-05.md`: an empty bearer
+    /// ladder must reject every candidate so `auth_middleware` falls
+    /// through to OIDC instead of granting access on a stale token.
+    #[test]
+    fn test_multi_auth_state_empty_rejects_all() {
+        let state = MultiAuthState::empty();
+        assert!(state.authenticate("any-token").is_none());
+        assert!(state.authenticate("").is_none());
+        assert_eq!(state.first_token(), None);
     }
 
     #[test]

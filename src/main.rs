@@ -1015,7 +1015,12 @@ async fn async_main() -> anyhow::Result<()> {
         // Persist auto-generated auth token so it survives restarts.
         // Gateway auth is env-only, so write to bootstrap `.env` rather than DB
         // settings and opportunistically remove any legacy DB copy.
-        if gw_config.auth_token.is_none() {
+        //
+        // Skip persistence when OIDC is the active auth path
+        // (OBSERVABILITY-2026-05.md F5): regenerating a bearer on every
+        // boot keeps the SPA's stale-token path alive even after the
+        // operator has commented out GATEWAY_AUTH_TOKEN in `.env`.
+        if gw_config.auth_token.is_none() && gw_config.oidc.is_none() {
             let token_to_persist = gw.auth_token().to_string();
             tokio::spawn(async move {
                 if let Err(e) = ironclaw::bootstrap::upsert_bootstrap_var(
@@ -1049,12 +1054,18 @@ async fn async_main() -> anyhow::Result<()> {
             }
         }
 
-        gateway_url = Some(format!(
-            "http://{}:{}/?token={}",
-            gw_config.host,
-            gw_config.port,
-            gw.auth_token()
-        ));
+        // With OIDC as the primary auth path the gateway has no bearer
+        // token to embed in the URL; emit the bare URL and let Cloudflare
+        // Access (or whatever fronts the gateway) handle authentication.
+        let token = gw.auth_token();
+        gateway_url = Some(if token.is_empty() {
+            format!("http://{}:{}/", gw_config.host, gw_config.port)
+        } else {
+            format!(
+                "http://{}:{}/?token={}",
+                gw_config.host, gw_config.port, token
+            )
+        });
 
         tracing::debug!("Web UI: http://{}:{}/", gw_config.host, gw_config.port);
 
