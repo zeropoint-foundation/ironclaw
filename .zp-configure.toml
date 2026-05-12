@@ -114,11 +114,13 @@ defaults = { SANDBOX_ENABLED = "true", SANDBOX_POLICY = "readonly" }
 notes = "Docker-based sandboxed code execution. Config vars, not credentials."
 
 # ── Auto-generatable secrets ───────────────────────────────
+# HTTP_WEBHOOK_SECRET removed from auto-generate per Foundation v1 deployment:
+# the HTTP webhook server channel is closed off entirely (see .env.example
+# HTTP Webhook Server section). Re-add here if a deployment needs the
+# webhook server enabled.
 
 [auto_generate]
-secrets = [
-    "HTTP_WEBHOOK_SECRET",
-]
+secrets = []
 
 # ── Aggregator / Deluxe mode ──────────────────────────────
 
@@ -163,5 +165,9 @@ env_map = { LLM_BACKEND = "ollama", OLLAMA_MODEL = "llama3.2", OLLAMA_BASE_URL =
 
 [launch]
 command = "cargo"
-args = ["run", "--release", "--", "run", "--cli-only"]
+# `run` with no flags: gateway active on localhost:3000 (member web UI) +
+# TUI on local terminal. Foundation members reach the gateway via the
+# Cloudflare Tunnel mapping app.zeropointfoundation.org → localhost:3000.
+# Add --cli-only for headless / TUI-only use; remove for full gateway+TUI mode.
+args = ["run", "--release", "--", "run"]
 working_dir = "."
