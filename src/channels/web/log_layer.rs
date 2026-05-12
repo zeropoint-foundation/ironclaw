@@ -17,11 +17,14 @@
 //! ```
 
 use std::collections::VecDeque;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tokio::sync::broadcast;
 use tracing::field::{Field, Visit};
+use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, reload};
@@ -173,18 +176,50 @@ impl LogLevelHandle {
     }
 }
 
+/// Build a non-blocking, daily-rotated file appender at
+/// `<log_dir>/ironclaw.YYYY-MM-DD.log`.
+///
+/// The returned [`WorkerGuard`] owns the background flush thread; the
+/// caller must hold it for the lifetime of the process. Dropping the
+/// guard halts the worker and pending lines are lost.
+///
+/// Creates `log_dir` if it doesn't exist.
+pub(crate) fn build_file_appender(log_dir: &Path) -> std::io::Result<(NonBlocking, WorkerGuard)> {
+    std::fs::create_dir_all(log_dir)?;
+    let appender = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("ironclaw")
+        .filename_suffix("log")
+        .build(log_dir)
+        .map_err(std::io::Error::other)?;
+    Ok(tracing_appender::non_blocking(appender))
+}
+
 /// Initialise the tracing subscriber with a reloadable `EnvFilter`.
 ///
-/// Returns the `LogLevelHandle` so callers can swap the filter at runtime.
-/// The fmt layer and `WebLogLayer` are attached alongside the reloadable filter.
+/// Returns the [`LogLevelHandle`] (for runtime filter changes) and a
+/// [`WorkerGuard`] that must outlive the process so the file-appender
+/// background thread can flush. The guard is `Option` because file-log
+/// setup may fail (read-only home, etc.) and we degrade rather than
+/// abort startup.
 ///
-/// When `suppress_stderr` is true, the stderr formatter is omitted. This is
-/// used in TUI mode where logs are displayed in the dedicated Logs tab instead
-/// of interleaving with the alternate screen.
+/// Three sinks are attached:
+///
+/// - **File** at `<log_dir>/ironclaw.YYYY-MM-DD.log` — always on, even
+///   in TUI mode. This is the operator's primary diagnostic surface
+///   when the TUI owns the terminal.
+/// - **`LogBroadcaster`** — always on, feeds the SSE
+///   `/api/logs/events` stream.
+/// - **stderr** — on unless `suppress_stderr` (TUI mode), since the
+///   TUI repaints over interleaved log output.
+///
+/// Implements principle #1 (observability is load-bearing) from
+/// `OBSERVABILITY-2026-05.md`: no execution mode silently swallows logs.
 pub fn init_tracing(
     log_broadcaster: Arc<LogBroadcaster>,
     suppress_stderr: bool,
-) -> Arc<LogLevelHandle> {
+    log_dir: &Path,
+) -> (Arc<LogLevelHandle>, Option<WorkerGuard>) {
     let raw_filter =
         std::env::var("RUST_LOG").unwrap_or_else(|_| "ironclaw=info,tower_http=warn".to_string());
 
@@ -213,6 +248,26 @@ pub fn init_tracing(
         base_filter,
     ));
 
+    let (file_layer, file_guard) = match build_file_appender(log_dir) {
+        Ok((writer, guard)) => {
+            let layer = tracing_subscriber::fmt::layer()
+                .with_writer(writer)
+                .with_ansi(false)
+                .with_target(true);
+            (Some(layer), Some(guard))
+        }
+        Err(e) => {
+            // Degrade gracefully — write the failure to stderr if it's
+            // visible, but don't abort startup over a log-dir problem.
+            eprintln!(
+                "warning: file logging disabled, could not open {}: {}",
+                log_dir.display(),
+                e
+            );
+            (None, None)
+        }
+    };
+
     let fmt_layer = if suppress_stderr {
         None
     } else {
@@ -226,10 +281,11 @@ pub fn init_tracing(
     tracing_subscriber::registry()
         .with(reload_layer)
         .with(fmt_layer)
+        .with(file_layer)
         .with(WebLogLayer::new(log_broadcaster))
         .init();
 
-    handle
+    (handle, file_guard)
 }
 
 /// Visitor that extracts the `message` field and all extra key-value
@@ -544,5 +600,75 @@ mod tests {
         let result = detector.scan_and_clean(msg);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), msg);
+    }
+
+    /// Regression for principle #1 (OBSERVABILITY-2026-05.md):
+    /// a TUI-mode run must still deposit log output to disk, otherwise
+    /// the operator's only diagnostic surface is the SSE stream that
+    /// requires gateway auth to read.
+    ///
+    /// Drives `build_file_appender` directly (the testable seam) rather
+    /// than `init_tracing`, which installs a global subscriber and so
+    /// can't be exercised twice in one test process.
+    #[test]
+    fn file_appender_creates_dir_and_writes_log_file() {
+        use std::io::Write;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let log_dir = tmp.path().join("logs");
+        assert!(!log_dir.exists(), "log dir should not exist yet");
+
+        let (mut writer, guard) =
+            build_file_appender(&log_dir).expect("file appender should build");
+        assert!(log_dir.exists(), "build_file_appender must create the dir");
+
+        writeln!(writer, "regression line — principle #1").expect("write should succeed");
+        // Dropping the guard flushes the background worker and joins it.
+        drop(guard);
+
+        let entries: Vec<_> = std::fs::read_dir(&log_dir)
+            .expect("read_dir")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect entries");
+        assert_eq!(entries.len(), 1, "expected one rolled log file");
+
+        let name = entries[0].file_name();
+        let name_str = name.to_string_lossy();
+        assert!(
+            name_str.starts_with("ironclaw.") && name_str.ends_with(".log"),
+            "unexpected log file name: {name_str}",
+        );
+
+        let content = std::fs::read_to_string(entries[0].path()).expect("read log");
+        assert!(
+            content.contains("regression line — principle #1"),
+            "expected our line in {content:?}",
+        );
+    }
+
+    /// `build_file_appender` returns the same canonical filename shape
+    /// across calls within the same UTC day so the boot banner / status
+    /// command can point operators at a single path.
+    #[test]
+    fn file_appender_filename_uses_prefix_and_suffix() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (writer, guard) = build_file_appender(tmp.path()).expect("file appender should build");
+        // Force the file to exist by writing something — the rolling
+        // appender opens lazily.
+        let mut w = writer;
+        use std::io::Write;
+        writeln!(w, "ping").unwrap();
+        drop(guard);
+
+        let names: Vec<String> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string()))
+            .collect();
+        assert!(
+            names
+                .iter()
+                .any(|n| n.starts_with("ironclaw.") && n.ends_with(".log")),
+            "expected an `ironclaw.<date>.log` file, got {names:?}",
+        );
     }
 }

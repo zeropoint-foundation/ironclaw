@@ -401,12 +401,16 @@ async fn async_main() -> anyhow::Result<()> {
     let log_broadcaster = Arc::new(LogBroadcaster::new());
 
     // Initialize tracing with a reloadable EnvFilter so the gateway can switch
-    // log levels at runtime without restarting.
+    // log levels at runtime without restarting. A daily-rotated file appender
+    // at ~/.ironclaw/logs/ is always attached — the TUI owns the terminal,
+    // so the file is the operator's diagnostic surface in that mode.
     let suppress_stderr =
         config.channels.tui.is_some() && cli.message.is_none() && cfg!(feature = "tui");
-    let log_level_handle = ironclaw::channels::web::log_layer::init_tracing(
+    let log_dir = ironclaw::bootstrap::ironclaw_base_dir().join("logs");
+    let (log_level_handle, _file_log_guard) = ironclaw::channels::web::log_layer::init_tracing(
         Arc::clone(&log_broadcaster),
         suppress_stderr,
+        &log_dir,
     );
 
     tracing::debug!("Starting IronClaw...");
