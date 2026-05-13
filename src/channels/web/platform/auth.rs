@@ -1194,9 +1194,10 @@ pub async fn auth_middleware(
 ) -> Response {
     // 0. Substrate-session cookie — check before bearer so the wizard handoff
     //    lands directly without a second challenge. Runs only when enabled.
-    if let Some(ref verifier) = auth.substrate_session {
-        if let Some(cookie_val) = extract_cookie_value(&headers, &verifier.cookie_name) {
-            match verifier.verify(&cookie_val) {
+    if let Some(ref verifier) = auth.substrate_session
+        && let Some(cookie_val) = extract_cookie_value(&headers, &verifier.cookie_name)
+    {
+        match verifier.verify(&cookie_val) {
                 Ok(claims) => {
                     tracing::debug!(
                         operator_id = %claims.operator_id,
@@ -1213,7 +1214,6 @@ pub async fn auth_middleware(
                 Err(reason) => {
                     tracing::debug!(reason, "substrate-session cookie present but invalid; falling through");
                 }
-            }
         }
     }
 
