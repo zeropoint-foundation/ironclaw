@@ -49,6 +49,7 @@ mod tests {
             workspace_read_scopes: Vec::new(),
             memory_layers: Vec::new(),
             oidc: None,
+            substrate_session: None,
         });
 
         let gateway_config = config

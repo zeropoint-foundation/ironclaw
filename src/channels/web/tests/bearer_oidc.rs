@@ -18,6 +18,7 @@ fn base_config(auth_token: Option<String>, oidc: Option<GatewayOidcConfig>) -> G
         workspace_read_scopes: vec![],
         memory_layers: vec![],
         oidc,
+        substrate_session: None,
     }
 }
 

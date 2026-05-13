@@ -20,6 +20,7 @@ fn test_gateway() -> GatewayChannel {
             workspace_read_scopes: vec![],
             memory_layers: vec![],
             oidc: None,
+            substrate_session: None,
         },
         "test-user".to_string(),
     )

@@ -82,6 +82,31 @@ pub struct GatewayConfig {
     pub memory_layers: Vec<crate::workspace::layer::MemoryLayer>,
     /// OIDC JWT authentication (e.g., behind AWS ALB with Okta).
     pub oidc: Option<GatewayOidcConfig>,
+    /// Substrate-session cookie auth (zeropointfoundation.org wizard handoff).
+    pub substrate_session: Option<SubstrateSessionConfig>,
+}
+
+/// Substrate-session cookie authentication for the web gateway.
+///
+/// The zeropointfoundation.org wizard signs a `zp_session` cookie with
+/// HMAC-SHA256 using `SESSION_SIGNING_KEY`. IronClaw reads and verifies
+/// that cookie so the wizard handoff lands the director directly in chat —
+/// no Cloudflare Access email-OTP challenge needed.
+///
+/// Key rotation: generate a new value with `openssl rand -base64 32`,
+/// set it as `SESSION_SIGNING_KEY` in the worker (wrangler secret put)
+/// and as `GATEWAY_SUBSTRATE_SESSION_KEY` here. Restart both. Old cookies
+/// expire within 24 h via their exp claim.
+///
+/// This is the bridge shape (#138). The proper OIDC-IdP shape is #139.
+#[derive(Debug, Clone)]
+pub struct SubstrateSessionConfig {
+    /// HMAC-SHA256 key, byte-identical to the worker's SESSION_SIGNING_KEY.
+    /// The raw UTF-8 bytes of this string are used as the HMAC key material
+    /// (mirrors JS `new TextEncoder().encode(secret)`).
+    pub signing_key: String,
+    /// Cookie name to read (default: `zp_session`).
+    pub cookie_name: String,
 }
 
 /// OIDC JWT authentication configuration for the web gateway.
@@ -277,6 +302,26 @@ impl ChannelsConfig {
                 None
             };
 
+            let substrate_session =
+                if parse_bool_env("GATEWAY_SUBSTRATE_SESSION_ENABLED", false)? {
+                    let signing_key =
+                        optional_env("GATEWAY_SUBSTRATE_SESSION_KEY")?.ok_or(
+                            ConfigError::InvalidValue {
+                                key: "GATEWAY_SUBSTRATE_SESSION_KEY".to_string(),
+                                message: "required when GATEWAY_SUBSTRATE_SESSION_ENABLED=true"
+                                    .to_string(),
+                            },
+                        )?;
+                    let cookie_name = optional_env("GATEWAY_SUBSTRATE_SESSION_COOKIE_NAME")?
+                        .unwrap_or_else(|| "zp_session".to_string());
+                    Some(SubstrateSessionConfig {
+                        signing_key,
+                        cookie_name,
+                    })
+                } else {
+                    None
+                };
+
             Some(GatewayConfig {
                 host: db_first_optional_string(&cs.gateway_host, "GATEWAY_HOST")?
                     .unwrap_or_else(|| "127.0.0.1".to_string()),
@@ -323,6 +368,7 @@ impl ChannelsConfig {
                 workspace_read_scopes,
                 memory_layers,
                 oidc,
+                substrate_session,
             })
         } else {
             None
@@ -513,6 +559,7 @@ mod tests {
             workspace_read_scopes: vec![],
             memory_layers: vec![],
             oidc: None,
+            substrate_session: None,
         };
         assert_eq!(cfg.host, "127.0.0.1");
         assert_eq!(cfg.port, 3000);
@@ -530,6 +577,7 @@ mod tests {
             workspace_read_scopes: vec![],
             memory_layers: vec![],
             oidc: None,
+            substrate_session: None,
         };
         assert!(cfg.auth_token.is_none());
     }

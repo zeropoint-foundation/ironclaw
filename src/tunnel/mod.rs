@@ -436,6 +436,7 @@ mod tests {
             workspace_read_scopes: Vec::new(),
             oidc: None,
             memory_layers: Vec::new(),
+            substrate_session: None,
         });
         c
     }
@@ -451,6 +452,7 @@ mod tests {
             workspace_read_scopes: Vec::new(),
             memory_layers: Vec::new(),
             oidc: None,
+            substrate_session: None,
         });
         c
     }

@@ -149,7 +149,16 @@ impl GatewayChannel {
             MultiAuthState::empty()
         };
 
+        let substrate_session = config.substrate_session.as_ref().map(|cfg| {
+            tracing::info!(
+                cookie_name = %cfg.cookie_name,
+                "Substrate-session cookie auth enabled"
+            );
+            auth::SubstrateSessionVerifier::new(&cfg.signing_key, cfg.cookie_name.clone())
+        });
+
         let auth = CombinedAuthState {
+            substrate_session,
             env_auth,
             db_auth: None,
             oidc: oidc_state,

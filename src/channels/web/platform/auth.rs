@@ -7,6 +7,12 @@
 //!     │
 //!     ▼
 //!   ┌─────────────────────────────┐
+//!   │ zp_session cookie           │──► HMAC-SHA256 ok + not expired ──► ALLOW
+//!   │ (if substrate_session on)   │
+//!   └────────────┬────────────────┘
+//!                │ missing / invalid / disabled
+//!                ▼
+//!   ┌─────────────────────────────┐
 //!   │ Authorization: Bearer …     │──► env-var token match ──► ALLOW
 //!   │ or ?token=xxx (SSE/WS only) │──► DB-backed token match ──► ALLOW
 //!   └────────────┬────────────────┘
@@ -49,9 +55,12 @@ use axum::{
 };
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use hmac::{Hmac, Mac};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
+
+type HmacSha256 = Hmac<Sha256>;
 use tokio::sync::RwLock;
 
 use crate::config::GatewayOidcConfig;
@@ -60,6 +69,110 @@ use crate::db::Database;
 /// Cookie name for OAuth browser sessions. Shared between the auth middleware
 /// (cookie extraction) and the auth handlers (cookie set/clear).
 pub const SESSION_COOKIE_NAME: &str = "ironclaw_session";
+
+// ── Substrate-session auth ────────────────────────────────────────────────
+
+/// Decoded payload from a `zp_session` cookie.
+#[derive(Debug)]
+pub struct SubstrateSessionClaims {
+    pub operator_id: String,
+    pub operator_name: String,
+    pub capabilities: Vec<String>,
+}
+
+/// Verifies HMAC-SHA256-signed session cookies issued by the
+/// zeropointfoundation.org worker.
+///
+/// Token format (mirrors `zeropointfoundation.org/src/auth/session.js`):
+/// ```text
+/// token      := <payload_b64> "." <sig_b64>
+/// payload    := base64url(JSON { sub, name, cap, iat, exp })
+/// sig        := base64url(HMAC-SHA256(UTF-8(key), UTF-8(payload_b64)))
+/// timestamps := milliseconds since Unix epoch (JS Date.now())
+/// ```
+#[derive(Clone)]
+pub struct SubstrateSessionVerifier {
+    /// Raw key bytes: UTF-8 encoding of the secret string, mirroring
+    /// JS `new TextEncoder().encode(SESSION_SIGNING_KEY)`.
+    key_bytes: std::sync::Arc<[u8]>,
+    /// Cookie name to read from incoming requests (default: `zp_session`).
+    pub cookie_name: String,
+}
+
+impl SubstrateSessionVerifier {
+    pub fn new(signing_key: &str, cookie_name: String) -> Self {
+        Self {
+            key_bytes: signing_key.as_bytes().to_vec().into(),
+            cookie_name,
+        }
+    }
+
+    /// Verify `token` and return the operator claims on success.
+    pub fn verify(&self, token: &str) -> Result<SubstrateSessionClaims, &'static str> {
+        // 1. Split on first '.'.
+        let dot = token.find('.').ok_or("malformed: no '.' separator")?;
+        let payload_b64 = &token[..dot]; // safety: dot is offset of ASCII '.', always on a char boundary
+        let sig_b64 = &token[dot + 1..]; // safety: dot + 1 is one past ASCII '.', valid char boundary
+
+        // 2. Compute expected HMAC-SHA256(key, payload_b64_bytes).
+        let mut mac = HmacSha256::new_from_slice(&self.key_bytes)
+            .map_err(|_| "invalid HMAC key")?;
+        mac.update(payload_b64.as_bytes());
+        let expected_bytes = mac.finalize().into_bytes();
+        let expected_sig = URL_SAFE_NO_PAD.encode(expected_bytes);
+
+        // 3. Constant-time compare to prevent timing side-channels.
+        if expected_sig.as_bytes().ct_eq(sig_b64.as_bytes()).unwrap_u8() != 1 {
+            return Err("invalid signature");
+        }
+
+        // 4. Decode payload (base64url → UTF-8 JSON).
+        let payload_bytes = URL_SAFE_NO_PAD
+            .decode(payload_b64)
+            .map_err(|_| "base64 decode failed")?;
+        let raw: serde_json::Value =
+            serde_json::from_slice(&payload_bytes).map_err(|_| "JSON decode failed")?;
+
+        // 5. Check expiry (timestamps are in milliseconds, matching JS Date.now()).
+        let exp_ms = raw["exp"].as_i64().ok_or("missing exp")?;
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        if now_ms > exp_ms {
+            return Err("token expired");
+        }
+
+        // 6. Extract claims.
+        let operator_id = raw["sub"]
+            .as_str()
+            .ok_or("missing sub")?
+            .to_string();
+        let operator_name = raw["name"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+
+        // `cap` is stored as a JSON-encoded string of a JSON array
+        // (the D1 TEXT column value). Parse the outer string, then the array.
+        let capabilities: Vec<String> = match &raw["cap"] {
+            serde_json::Value::String(s) => {
+                serde_json::from_str(s).unwrap_or_default()
+            }
+            serde_json::Value::Array(arr) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
+            _ => Vec::new(),
+        };
+
+        Ok(SubstrateSessionClaims {
+            operator_id,
+            operator_name,
+            capabilities,
+        })
+    }
+}
 
 // ── User identity ────────────────────────────────────────────────────────
 
@@ -306,10 +419,11 @@ impl DbAuthenticator {
 
 // ── Combined auth state ────────────────────────────────────────────────────
 
-/// Combined auth state: tries env-var tokens first, then DB-backed tokens,
-/// then OIDC JWT (if configured).
+/// Combined auth state: substrate cookie → env-var tokens → DB tokens → OIDC → 401.
 #[derive(Clone)]
 pub struct CombinedAuthState {
+    /// Substrate-session cookie verifier (None when disabled).
+    pub substrate_session: Option<SubstrateSessionVerifier>,
     /// In-memory tokens from GATEWAY_AUTH_TOKEN.
     pub env_auth: MultiAuthState,
     /// DB-backed token authenticator (optional — only when a database is available).
@@ -323,6 +437,7 @@ pub struct CombinedAuthState {
 impl From<MultiAuthState> for CombinedAuthState {
     fn from(env_auth: MultiAuthState) -> Self {
         Self {
+            substrate_session: None,
             env_auth,
             db_auth: None,
             oidc: None,
@@ -1077,6 +1192,31 @@ pub async fn auth_middleware(
     mut request: Request,
     next: Next,
 ) -> Response {
+    // 0. Substrate-session cookie — check before bearer so the wizard handoff
+    //    lands directly without a second challenge. Runs only when enabled.
+    if let Some(ref verifier) = auth.substrate_session {
+        if let Some(cookie_val) = extract_cookie_value(&headers, &verifier.cookie_name) {
+            match verifier.verify(&cookie_val) {
+                Ok(claims) => {
+                    tracing::debug!(
+                        operator_id = %claims.operator_id,
+                        "substrate-session auth succeeded"
+                    );
+                    let identity = UserIdentity {
+                        user_id: claims.operator_id,
+                        role: "member".to_string(),
+                        workspace_read_scopes: Vec::new(),
+                    };
+                    request.extensions_mut().insert(identity);
+                    return next.run(request).await;
+                }
+                Err(reason) => {
+                    tracing::debug!(reason, "substrate-session cookie present but invalid; falling through");
+                }
+            }
+        }
+    }
+
     // Extract the candidate token from header or query param.
     let token = extract_token(&headers, &request);
 
@@ -2044,6 +2184,7 @@ mod tests {
     /// Build a CombinedAuthState with bearer token + OIDC.
     async fn oidc_auth_state() -> CombinedAuthState {
         CombinedAuthState {
+            substrate_session: None,
             env_auth: MultiAuthState::single(
                 "bearer-token-123".to_string(),
                 "bearer-user".to_string(),

@@ -29,6 +29,7 @@ fn test_gateway() -> GatewayChannel {
             oidc: None,
             max_connections: 100,
             broadcast_buffer: DEFAULT_BROADCAST_BUFFER,
+            substrate_session: None,
         },
         "test-user".to_string(),
     )
