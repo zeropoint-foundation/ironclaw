@@ -115,14 +115,19 @@ impl SubstrateSessionVerifier {
         let sig_b64 = &token[dot + 1..]; // safety: dot + 1 is one past ASCII '.', valid char boundary
 
         // 2. Compute expected HMAC-SHA256(key, payload_b64_bytes).
-        let mut mac = HmacSha256::new_from_slice(&self.key_bytes)
-            .map_err(|_| "invalid HMAC key")?;
+        let mut mac =
+            HmacSha256::new_from_slice(&self.key_bytes).map_err(|_| "invalid HMAC key")?;
         mac.update(payload_b64.as_bytes());
         let expected_bytes = mac.finalize().into_bytes();
         let expected_sig = URL_SAFE_NO_PAD.encode(expected_bytes);
 
         // 3. Constant-time compare to prevent timing side-channels.
-        if expected_sig.as_bytes().ct_eq(sig_b64.as_bytes()).unwrap_u8() != 1 {
+        if expected_sig
+            .as_bytes()
+            .ct_eq(sig_b64.as_bytes())
+            .unwrap_u8()
+            != 1
+        {
             return Err("invalid signature");
         }
 
@@ -144,21 +149,13 @@ impl SubstrateSessionVerifier {
         }
 
         // 6. Extract claims.
-        let operator_id = raw["sub"]
-            .as_str()
-            .ok_or("missing sub")?
-            .to_string();
-        let operator_name = raw["name"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let operator_id = raw["sub"].as_str().ok_or("missing sub")?.to_string();
+        let operator_name = raw["name"].as_str().unwrap_or("").to_string();
 
         // `cap` is stored as a JSON-encoded string of a JSON array
         // (the D1 TEXT column value). Parse the outer string, then the array.
         let capabilities: Vec<String> = match &raw["cap"] {
-            serde_json::Value::String(s) => {
-                serde_json::from_str(s).unwrap_or_default()
-            }
+            serde_json::Value::String(s) => serde_json::from_str(s).unwrap_or_default(),
             serde_json::Value::Array(arr) => arr
                 .iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
@@ -1198,34 +1195,37 @@ pub async fn auth_middleware(
         && let Some(cookie_val) = extract_cookie_value(&headers, &verifier.cookie_name)
     {
         match verifier.verify(&cookie_val) {
-                Ok(claims) => {
-                    tracing::debug!(
-                        operator_id = %claims.operator_id,
-                        "substrate-session auth succeeded"
-                    );
-                    let operator_id = claims.operator_id.clone();
-                    let identity = UserIdentity {
-                        user_id: claims.operator_id,
-                        role: "member".to_string(),
-                        workspace_read_scopes: Vec::new(),
-                    };
-                    request.extensions_mut().insert(identity);
-                    // Carry the raw session token + operator_id forward so the
-                    // chat handler can attach them to the IncomingMessage and
-                    // the tool layer can replay the cookie against foundation
-                    // APIs. The cookie name was the user-visible binding; the
-                    // token value is the bearer credential.
-                    request
-                        .extensions_mut()
-                        .insert(crate::context::SubstrateSessionInfo {
-                            operator_id,
-                            session_token: cookie_val,
-                        });
-                    return next.run(request).await;
-                }
-                Err(reason) => {
-                    tracing::debug!(reason, "substrate-session cookie present but invalid; falling through");
-                }
+            Ok(claims) => {
+                tracing::debug!(
+                    operator_id = %claims.operator_id,
+                    "substrate-session auth succeeded"
+                );
+                let operator_id = claims.operator_id.clone();
+                let identity = UserIdentity {
+                    user_id: claims.operator_id,
+                    role: "member".to_string(),
+                    workspace_read_scopes: Vec::new(),
+                };
+                request.extensions_mut().insert(identity);
+                // Carry the raw session token + operator_id forward so the
+                // chat handler can attach them to the IncomingMessage and
+                // the tool layer can replay the cookie against foundation
+                // APIs. The cookie name was the user-visible binding; the
+                // token value is the bearer credential.
+                request
+                    .extensions_mut()
+                    .insert(crate::context::SubstrateSessionInfo {
+                        operator_id,
+                        session_token: cookie_val,
+                    });
+                return next.run(request).await;
+            }
+            Err(reason) => {
+                tracing::debug!(
+                    reason,
+                    "substrate-session cookie present but invalid; falling through"
+                );
+            }
         }
     }
 

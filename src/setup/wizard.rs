@@ -4394,6 +4394,10 @@ mod tests {
     #[test]
     fn test_set_llm_backend_clears_model_when_backend_was_unset() {
         let mut wizard = SetupWizard::new();
+        // Explicitly reset to the "unset backend" state the test exercises —
+        // SetupWizard::new() reads ~/.ironclaw/config.toml which may already
+        // have llm_backend = "openai" in a developer environment.
+        wizard.settings.llm_backend = None;
         wizard.settings.selected_model = Some("gpt-4o".to_string());
 
         wizard.set_llm_backend_preserving_model("openai");
@@ -4712,10 +4716,15 @@ mod tests {
 
         let _backend_guard = EnvGuard::set("DATABASE_BACKEND", "libsql");
         let _path_guard = EnvGuard::set("LIBSQL_PATH", db_path.to_str().unwrap());
-        // Ensure no postgres env interferes
+        // Ensure no postgres env interferes. Clear before and after wizard
+        // creation: SetupWizard::new() calls load_ironclaw_env() (dotenvy)
+        // which may reload DATABASE_URL from ~/.ironclaw/.env.
         let _pg_guard = EnvGuard::clear("DATABASE_URL");
 
         let mut wizard = SetupWizard::new();
+        // Re-clear after wizard creation in case load_ironclaw_env() reloaded it
+        // from ~/.ironclaw/.env (dotenvy sets vars that were absent from the env).
+        let _pg_guard2 = EnvGuard::clear("DATABASE_URL");
         wizard.config.quick = true;
 
         wizard.auto_setup_database().await.unwrap();

@@ -302,25 +302,22 @@ impl ChannelsConfig {
                 None
             };
 
-            let substrate_session =
-                if parse_bool_env("GATEWAY_SUBSTRATE_SESSION_ENABLED", false)? {
-                    let signing_key =
-                        optional_env("GATEWAY_SUBSTRATE_SESSION_KEY")?.ok_or(
-                            ConfigError::InvalidValue {
-                                key: "GATEWAY_SUBSTRATE_SESSION_KEY".to_string(),
-                                message: "required when GATEWAY_SUBSTRATE_SESSION_ENABLED=true"
-                                    .to_string(),
-                            },
-                        )?;
-                    let cookie_name = optional_env("GATEWAY_SUBSTRATE_SESSION_COOKIE_NAME")?
-                        .unwrap_or_else(|| "zp_session".to_string());
-                    Some(SubstrateSessionConfig {
-                        signing_key,
-                        cookie_name,
-                    })
-                } else {
-                    None
-                };
+            let substrate_session = if parse_bool_env("GATEWAY_SUBSTRATE_SESSION_ENABLED", false)? {
+                let signing_key = optional_env("GATEWAY_SUBSTRATE_SESSION_KEY")?.ok_or(
+                    ConfigError::InvalidValue {
+                        key: "GATEWAY_SUBSTRATE_SESSION_KEY".to_string(),
+                        message: "required when GATEWAY_SUBSTRATE_SESSION_ENABLED=true".to_string(),
+                    },
+                )?;
+                let cookie_name = optional_env("GATEWAY_SUBSTRATE_SESSION_COOKIE_NAME")?
+                    .unwrap_or_else(|| "zp_session".to_string());
+                Some(SubstrateSessionConfig {
+                    signing_key,
+                    cookie_name,
+                })
+            } else {
+                None
+            };
 
             Some(GatewayConfig {
                 host: db_first_optional_string(&cs.gateway_host, "GATEWAY_HOST")?

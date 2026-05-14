@@ -47,7 +47,11 @@ impl ChainRenderTool {
             .timeout(HTTP_TIMEOUT)
             .build()
             .unwrap_or_else(|_| Client::new());
-        Self { llm, http, base_url }
+        Self {
+            llm,
+            http,
+            base_url,
+        }
     }
 
     #[cfg(test)]
@@ -56,7 +60,11 @@ impl ChainRenderTool {
             .timeout(HTTP_TIMEOUT)
             .build()
             .unwrap_or_else(|_| Client::new());
-        Self { llm, http, base_url }
+        Self {
+            llm,
+            http,
+            base_url,
+        }
     }
 }
 
@@ -122,10 +130,7 @@ impl Tool for ChainRenderTool {
         let chain_resp = self
             .http
             .get(&chain_url)
-            .header(
-                "Authorization",
-                format!("Bearer {}", session.session_token),
-            )
+            .header("Authorization", format!("Bearer {}", session.session_token))
             .send()
             .await
             .map_err(|e| {
@@ -163,9 +168,10 @@ impl Tool for ChainRenderTool {
         // 2. Fetch the voice anchor. Anchor is served as a public static asset
         // (no auth) so no Authorization header.
         let anchor_url = format!("{}{}", self.base_url, NARRATIVE_PATH);
-        let anchor_resp = self.http.get(&anchor_url).send().await.map_err(|e| {
-            ToolError::ExecutionFailed(format!("Voice anchor fetch failed: {e}"))
-        })?;
+        let anchor_resp =
+            self.http.get(&anchor_url).send().await.map_err(|e| {
+                ToolError::ExecutionFailed(format!("Voice anchor fetch failed: {e}"))
+            })?;
         if !anchor_resp.status().is_success() {
             return Err(ToolError::ExecutionFailed(format!(
                 "Voice anchor endpoint returned {} for {anchor_url}",
@@ -178,11 +184,11 @@ impl Tool for ChainRenderTool {
 
         // 3. Build the user message. Anchor first, then receipts, then directive.
         let receipts_pretty = serde_json::to_string_pretty(
-            chain_body.get("receipts").unwrap_or(&serde_json::Value::Null),
+            chain_body
+                .get("receipts")
+                .unwrap_or(&serde_json::Value::Null),
         )
-        .map_err(|e| {
-            ToolError::ExecutionFailed(format!("Receipt JSON re-encoding failed: {e}"))
-        })?;
+        .map_err(|e| ToolError::ExecutionFailed(format!("Receipt JSON re-encoding failed: {e}")))?;
 
         let user_msg = format!(
             "VOICE ANCHOR (YAML)\n===\n{anchor_yaml}\n\n\
@@ -207,13 +213,9 @@ impl Tool for ChainRenderTool {
         let response = tokio::time::timeout(LLM_TIMEOUT, self.llm.complete(request))
             .await
             .map_err(|_| {
-                ToolError::ExecutionFailed(format!(
-                    "LLM narration timed out after {LLM_TIMEOUT:?}"
-                ))
+                ToolError::ExecutionFailed(format!("LLM narration timed out after {LLM_TIMEOUT:?}"))
             })?
-            .map_err(|e| {
-                ToolError::ExecutionFailed(format!("LLM narration call failed: {e}"))
-            })?;
+            .map_err(|e| ToolError::ExecutionFailed(format!("LLM narration call failed: {e}")))?;
 
         // Sanitize the narration the same way memory_search does — defends
         // against attacker-controlled receipt metadata that flowed through
@@ -269,8 +271,8 @@ mod tests {
             operator_id: "ken".to_string(),
             session_token: "tok-xyz".to_string(),
         };
-        let ctx = JobContext::new("test", "with session")
-            .with_substrate_session(Some(info.clone()));
+        let ctx =
+            JobContext::new("test", "with session").with_substrate_session(Some(info.clone()));
         let stored = ctx
             .substrate_session
             .as_ref()

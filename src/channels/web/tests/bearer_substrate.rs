@@ -12,7 +12,9 @@ use axum::middleware;
 use axum::routing::get;
 use tower::ServiceExt;
 
-use crate::channels::web::auth::{AuthenticatedUser, CombinedAuthState, SubstrateSessionVerifier, auth_middleware};
+use crate::channels::web::auth::{
+    AuthenticatedUser, CombinedAuthState, SubstrateSessionVerifier, auth_middleware,
+};
 use crate::channels::web::sse::DEFAULT_BROADCAST_BUFFER;
 use crate::config::GatewayConfig;
 
@@ -43,8 +45,7 @@ fn make_token(key: &str, sub: &str, exp_offset_ms: i64) -> String {
         "iat": now,
         "exp": now + exp_offset_ms,
     });
-    let payload_b64 =
-        URL_SAFE_NO_PAD.encode(serde_json::to_string(&payload).unwrap().as_bytes());
+    let payload_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_string(&payload).unwrap().as_bytes());
     let mut mac = HmacSha256::new_from_slice(key.as_bytes()).unwrap();
     mac.update(payload_b64.as_bytes());
     let sig = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
@@ -70,7 +71,10 @@ fn valid_token_verifies() {
 #[test]
 fn wrong_key_is_rejected() {
     let bad_tok = make_token("wrong-key-32-bytes-minimum-len!!", "ken", 60_000);
-    assert!(verifier().verify(&bad_tok).is_err(), "wrong key must be rejected");
+    assert!(
+        verifier().verify(&bad_tok).is_err(),
+        "wrong key must be rejected"
+    );
 }
 
 #[test]
@@ -106,7 +110,10 @@ fn tampered_payload_rejected() {
         .as_bytes(),
     );
     let tampered = format!("{evil_payload}.{sig}");
-    assert!(verifier().verify(&tampered).is_err(), "tampered payload must be rejected");
+    assert!(
+        verifier().verify(&tampered).is_err(),
+        "tampered payload must be rejected"
+    );
 }
 
 // ── Integration helpers ───────────────────────────────────────────────────────

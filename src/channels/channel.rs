@@ -118,10 +118,7 @@ impl IncomingMessage {
     /// Attach a foundation substrate session to this message. The web gateway
     /// calls this when the request authenticated via a `zp_session` cookie;
     /// other channels leave it unset.
-    pub fn with_substrate_session(
-        mut self,
-        info: crate::context::SubstrateSessionInfo,
-    ) -> Self {
+    pub fn with_substrate_session(mut self, info: crate::context::SubstrateSessionInfo) -> Self {
         self.substrate_session = Some(info);
         self
     }

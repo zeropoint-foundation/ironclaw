@@ -14,6 +14,4 @@ mod state;
 pub use fallback::FallbackDeliverable;
 pub use manager::ContextManager;
 pub use memory::{ActionRecord, ConversationMemory, Memory};
-pub use state::{
-    JobContext, JobState, StateTransition, SubstrateSessionInfo, TokenBudgetExceeded,
-};
+pub use state::{JobContext, JobState, StateTransition, SubstrateSessionInfo, TokenBudgetExceeded};

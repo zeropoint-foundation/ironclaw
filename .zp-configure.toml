@@ -60,8 +60,8 @@ defaults = { ANTHROPIC_MODEL = "claude-sonnet-4-20250514", ANTHROPIC_BASE_URL = 
 
 [[required.backend_groups]]
 backend = "openai"
-env_vars = ["OPENAI_API_KEY"]
-defaults = {}
+env_vars = ["OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL"]
+defaults = { OPENAI_MODEL = "gpt-4o", OPENAI_BASE_URL = "https://api.openai.com/v1" }
 
 [[required.backend_groups]]
 backend = "ollama"
@@ -141,7 +141,7 @@ env_map = { LLM_BACKEND = "anthropic", ANTHROPIC_API_KEY = "${vault:anthropic/ap
 
 [[provider_overrides]]
 provider = "openai"
-env_map = { LLM_BACKEND = "openai", OPENAI_API_KEY = "${vault:openai/api_key}" }
+env_map = { LLM_BACKEND = "openai", OPENAI_API_KEY = "${vault:openai/api_key}", OPENAI_MODEL = "gpt-4o", OPENAI_BASE_URL = "https://api.openai.com/v1" }
 
 [[provider_overrides]]
 provider = "openrouter"
