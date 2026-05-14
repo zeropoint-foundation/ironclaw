@@ -123,6 +123,23 @@ pub struct StateTransition {
     pub reason: Option<String>,
 }
 
+/// Authenticated substrate session captured at the gateway boundary and
+/// carried into the tool execution layer.
+///
+/// Set when the request arrived with a valid `zp_session` cookie issued by
+/// the foundation worker (`zeropointfoundation.org`). Tools that need to
+/// call back into foundation APIs replay `session_token` as a bearer
+/// credential and use `operator_id` for context.
+///
+/// Absent for any request that authenticated via a different mechanism
+/// (env-var bearer, OIDC, DB-backed multi-user tokens) — those callers do
+/// not have a foundation operator identity to forward.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubstrateSessionInfo {
+    pub operator_id: String,
+    pub session_token: String,
+}
+
 /// Context for a running job.
 #[derive(Debug, Clone, Serialize)]
 pub struct JobContext {
@@ -207,6 +224,10 @@ pub struct JobContext {
     /// if they're allowed to run in autonomous/non-interactive contexts.
     #[serde(skip)]
     pub approval_context: Option<ApprovalContext>,
+    /// Foundation-substrate session forwarded from the gateway request, when
+    /// the caller authenticated via a `zp_session` cookie.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub substrate_session: Option<SubstrateSessionInfo>,
 }
 
 impl crate::ownership::Owned for JobContext {
@@ -255,6 +276,7 @@ impl JobContext {
             tool_output_stash: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             user_timezone: "UTC".to_string(),
             approval_context: None,
+            substrate_session: None,
         }
     }
 
@@ -292,6 +314,7 @@ impl JobContext {
             tool_output_stash: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             user_timezone: "UTC".to_string(),
             approval_context: None,
+            substrate_session: None,
         }
     }
 
@@ -310,6 +333,14 @@ impl JobContext {
     /// Set the approval context on this context.
     pub fn with_approval_context(mut self, ctx: ApprovalContext) -> Self {
         self.approval_context = Some(ctx);
+        self
+    }
+
+    /// Attach a foundation substrate session, when one was carried in via
+    /// the gateway request. Tools that call back into foundation APIs read
+    /// this to authenticate outbound calls.
+    pub fn with_substrate_session(mut self, info: Option<SubstrateSessionInfo>) -> Self {
+        self.substrate_session = info;
         self
     }
 

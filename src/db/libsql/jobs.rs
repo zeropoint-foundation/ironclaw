@@ -138,6 +138,10 @@ impl JobStore for LibSqlBackend {
                     // DB restore. Tools that were allowed before restart will be blocked
                     // until the scheduler re-sets the context on the next dispatch.
                     approval_context: None,
+                    // substrate_session is request-scoped: it lives only for the
+                    // gateway turn that carried the cookie. Restored jobs have no
+                    // live session; tools requiring one must surface an error.
+                    substrate_session: None,
                 }))
             }
             None => Ok(None),

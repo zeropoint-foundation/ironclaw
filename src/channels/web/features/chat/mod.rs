@@ -82,6 +82,7 @@ use crate::channels::web::util::{
 pub(crate) async fn chat_send_handler(
     State(state): State<Arc<GatewayState>>,
     AuthenticatedUser(user): AuthenticatedUser,
+    substrate_session: Option<axum::extract::Extension<crate::context::SubstrateSessionInfo>>,
     headers: axum::http::HeaderMap,
     Json(req): Json<SendMessageRequest>,
 ) -> Result<(StatusCode, Json<SendMessageResponse>), (StatusCode, String)> {
@@ -111,6 +112,9 @@ pub(crate) async fn chat_send_handler(
         .or_else(|| headers.get("X-Timezone").and_then(|v| v.to_str().ok()));
     if let Some(tz) = tz {
         msg = msg.with_timezone(tz);
+    }
+    if let Some(axum::extract::Extension(info)) = substrate_session {
+        msg = msg.with_substrate_session(info);
     }
 
     // Convert uploaded images + generic file attachments to IncomingAttachments
@@ -1885,6 +1889,7 @@ mod tests {
                 role: "member".to_string(),
                 workspace_read_scopes: Vec::new(),
             }),
+            None,
             axum::http::HeaderMap::new(),
             axum::Json(req),
         )
@@ -1930,6 +1935,7 @@ mod tests {
                 role: "member".to_string(),
                 workspace_read_scopes: Vec::new(),
             }),
+            None,
             axum::http::HeaderMap::new(),
             axum::Json(req),
         )
@@ -1965,6 +1971,7 @@ mod tests {
             let (status, _) = chat_send_handler(
                 axum::extract::State(Arc::clone(&state)),
                 user(),
+                None,
                 axum::http::HeaderMap::new(),
                 axum::Json(req),
             )
@@ -1991,6 +1998,7 @@ mod tests {
         let err = chat_send_handler(
             axum::extract::State(Arc::clone(&state)),
             user(),
+            None,
             axum::http::HeaderMap::new(),
             axum::Json(req),
         )

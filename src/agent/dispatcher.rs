@@ -53,7 +53,8 @@ fn chat_job_context(
     user_tz: chrono_tz::Tz,
 ) -> JobContext {
     let mut job_ctx = JobContext::with_user(&message.user_id, "chat", "Interactive chat session")
-        .with_requester_id(&message.sender_id);
+        .with_requester_id(&message.sender_id)
+        .with_substrate_session(message.substrate_session.clone());
     job_ctx.conversation_id = Some(thread_id);
     job_ctx.user_timezone = user_tz.name().to_string();
     job_ctx.metadata = crate::agent::agent_loop::chat_tool_execution_metadata(message);

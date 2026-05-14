@@ -2556,6 +2556,7 @@ mod tests {
             is_internal: false,
             is_agent_broadcast: false,
             triggering_mission_id: None,
+            substrate_session: None,
         }
     }
 

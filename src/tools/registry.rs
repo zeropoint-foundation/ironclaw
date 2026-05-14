@@ -14,9 +14,10 @@ use crate::tools::builder::{
     BuildSoftwareTool, BuilderConfig, LlmSoftwareBuilder, SoftwareBuilder,
 };
 use crate::tools::builtin::{
-    ApplyPatchTool, CancelJobTool, CreateJobTool, EchoTool, ExtensionInfoTool, FileUndoTool,
-    GlobTool, GrepTool, HttpTool, JobEventsTool, JobPromptTool, JobStatusTool, JsonTool,
-    ListDirTool, ListJobsTool, MemoryReadTool, MemorySearchTool, MemoryTreeTool, MemoryWriteTool,
+    ApplyPatchTool, CancelJobTool, ChainRenderTool, CreateJobTool, EchoTool, ExtensionInfoTool,
+    FileUndoTool, GlobTool, GrepTool, HttpTool, JobEventsTool, JobPromptTool, JobStatusTool,
+    JsonTool, ListDirTool, ListJobsTool, MemoryReadTool, MemorySearchTool, MemoryTreeTool,
+    MemoryWriteTool,
     PlanUpdateTool, PromptQueue, ReadFileTool, ShellTool, SkillInstallTool, SkillListTool,
     SkillRemoveTool, SkillSearchTool, TimeTool, ToolAuthTool, ToolInstallTool, ToolListTool,
     ToolPermissionSetTool, ToolRemoveTool, ToolSearchTool, ToolUpgradeTool, WriteFileTool,
@@ -108,6 +109,8 @@ const PROTECTED_TOOL_NAMES: &[&str] = &[
     "plan_update",
     // Permission tools
     "tool_permission_set",
+    // Substrate / agent-rendered surface tools
+    "chain_render",
     // Aliases (web_fetch is an alias for http in some contexts)
     "web_fetch",
 ];
@@ -598,6 +601,16 @@ impl ToolRegistry {
         self.register_sync(Arc::new(MemoryTreeTool::new(resolver)));
 
         tracing::debug!("Registered 4 memory tools");
+    }
+
+    /// Register the chain-render tool (agent-rendered substrate UX PoC).
+    ///
+    /// Requires an LLM provider for live narration. Call this after
+    /// `register_builtin_tools()`. See `docs/AGENTIC-SURFACE-2026-05.md`
+    /// for the architectural direction this tool tests.
+    pub fn register_chain_render_tool(&self, llm: Arc<dyn ironclaw_llm::LlmProvider>) {
+        self.register_sync(Arc::new(ChainRenderTool::new(llm)));
+        tracing::debug!("Registered chain_render tool");
     }
 
     /// Register memory tools with a fixed workspace (backward compatibility).

@@ -1203,12 +1203,24 @@ pub async fn auth_middleware(
                         operator_id = %claims.operator_id,
                         "substrate-session auth succeeded"
                     );
+                    let operator_id = claims.operator_id.clone();
                     let identity = UserIdentity {
                         user_id: claims.operator_id,
                         role: "member".to_string(),
                         workspace_read_scopes: Vec::new(),
                     };
                     request.extensions_mut().insert(identity);
+                    // Carry the raw session token + operator_id forward so the
+                    // chat handler can attach them to the IncomingMessage and
+                    // the tool layer can replay the cookie against foundation
+                    // APIs. The cookie name was the user-visible binding; the
+                    // token value is the bearer credential.
+                    request
+                        .extensions_mut()
+                        .insert(crate::context::SubstrateSessionInfo {
+                            operator_id,
+                            session_token: cookie_val,
+                        });
                     return next.run(request).await;
                 }
                 Err(reason) => {

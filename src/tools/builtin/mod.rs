@@ -1,5 +1,6 @@
 //! Built-in tools that come with the agent.
 
+mod chain_render;
 mod echo;
 pub mod extension_tools;
 mod file;
@@ -23,6 +24,7 @@ pub mod system;
 mod time;
 mod tool_info;
 
+pub use chain_render::ChainRenderTool;
 pub use echo::EchoTool;
 pub use extension_tools::{
     ExtensionInfoTool, ToolAuthTool, ToolInstallTool, ToolListTool, ToolPermissionSetTool,

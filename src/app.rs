@@ -548,6 +548,11 @@ impl AppBuilder {
             tools.register_secrets_tools(Arc::clone(ss));
         }
 
+        // Chain-render tool — agent-rendered substrate UX PoC. Needs the
+        // primary LLM for live narration; does not depend on DB or workspace.
+        // See `docs/AGENTIC-SURFACE-2026-05.md`.
+        tools.register_chain_render_tool(Arc::clone(llm));
+
         // Create embeddings provider using the unified method
         let embeddings = self
             .config

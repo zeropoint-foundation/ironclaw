@@ -79,6 +79,11 @@ pub struct IncomingMessage {
     /// notification → mission C → ...). The string is the originating
     /// `MissionId` for diagnostics.
     pub triggering_mission_id: Option<String>,
+    /// Foundation substrate session captured by the gateway middleware when
+    /// the request arrived with a valid `zp_session` cookie. Channel
+    /// adapters propagate this so the agent loop can forward it into
+    /// `JobContext` for tools that call back to foundation APIs.
+    pub substrate_session: Option<crate::context::SubstrateSessionInfo>,
 }
 
 impl IncomingMessage {
@@ -106,7 +111,19 @@ impl IncomingMessage {
             is_internal: false,
             is_agent_broadcast: false,
             triggering_mission_id: None,
+            substrate_session: None,
         }
+    }
+
+    /// Attach a foundation substrate session to this message. The web gateway
+    /// calls this when the request authenticated via a `zp_session` cookie;
+    /// other channels leave it unset.
+    pub fn with_substrate_session(
+        mut self,
+        info: crate::context::SubstrateSessionInfo,
+    ) -> Self {
+        self.substrate_session = Some(info);
+        self
     }
 
     /// Mark this message as an agent broadcast echo. Channel adapters that
