@@ -105,7 +105,12 @@ pub async fn skills_list_handler(
         guard.skills().to_vec()
     };
 
-    let skills: Vec<SkillInfo> = join_all(skill_snapshot.into_iter().map(skill_info)).await;
+    let visible: Vec<_> = skill_snapshot
+        .into_iter()
+        .filter(|s| s.manifest.user_invocable)
+        .collect();
+
+    let skills: Vec<SkillInfo> = join_all(visible.into_iter().map(skill_info)).await;
 
     let count = skills.len();
     Ok(Json(SkillListResponse { skills, count }))

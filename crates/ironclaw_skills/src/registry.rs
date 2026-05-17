@@ -965,6 +965,25 @@ async fn build_loaded_skill(
     let lowercased_tags = to_lowercase_vec(&manifest.activation.tags);
 
     let name = manifest.name.clone();
+
+    // Deployment-posture audit: log once at load time for each skill that has a
+    // gate set so operators can grep for gate configuration without watching every
+    // dispatch (§4.3 — INFO at startup, DEBUG per dispatch).
+    if manifest.disable_model_invocation {
+        tracing::info!(
+            skill = %name,
+            disable_model_invocation = true,
+            "skill_loaded: disable-model-invocation gate active"
+        );
+    }
+    if !manifest.user_invocable {
+        tracing::info!(
+            skill = %name,
+            user_invocable = false,
+            "skill_loaded: user-invocable=false (hidden from menus)"
+        );
+    }
+
     let skill = LoadedSkill {
         manifest,
         prompt_content,

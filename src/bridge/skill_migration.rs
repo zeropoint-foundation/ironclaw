@@ -218,6 +218,8 @@ mod tests {
                 },
                 credentials: vec![],
                 requires: ironclaw_skills::GatingRequirements::default(),
+                disable_model_invocation: false,
+                user_invocable: true,
             },
             prompt_content: content.to_string(),
             trust: SkillTrust::Trusted,

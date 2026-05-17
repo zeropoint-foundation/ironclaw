@@ -2566,10 +2566,25 @@ async fn handle_list_skills(
                         marker = %m,
                         "__list_skills__: excluding setup skill — marker already present"
                     );
-                    false
+                    return false;
                 }
-                _ => true,
+                _ => {}
             }
+            // disable-model-invocation: skill author declared this skill
+            // must not auto-fire on context match.
+            let disabled = d
+                .metadata
+                .get("disable-model-invocation")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if disabled {
+                debug!(
+                    skill = %d.title,
+                    "__list_skills__: excluding skill — disable-model-invocation"
+                );
+                return false;
+            }
+            true
         })
         .map(|d| {
             serde_json::json!({

@@ -184,6 +184,16 @@ pub fn prefilter_skills<'a>(
             {
                 return None;
             }
+            // disable-model-invocation: skill author declared this skill must
+            // not auto-fire on context match. It can still be force-activated
+            // via /skill-name or chain-loaded from a parent skill's requires.
+            if skill.manifest.disable_model_invocation {
+                tracing::debug!(
+                    skill = %skill.manifest.name,
+                    "skill_skipped: reason=disable_model_invocation"
+                );
+                return None;
+            }
             let score = score_skill(skill, &message_lower, message);
             if score > 0 {
                 Some(ScoredSkill { skill, score })
@@ -405,6 +415,16 @@ pub fn extract_skill_mentions<'a>(
                             .iter()
                             .any(|s: &&LoadedSkill| s.manifest.name == skill.manifest.name)
                         {
+                            if skill.manifest.disable_model_invocation {
+                                tracing::debug!(
+                                    skill = %skill.manifest.name,
+                                    gate_bypassed = true,
+                                    "skill_explicit_invoke: disable-model-invocation gate bypassed by operator /mention"
+                                );
+                                // TODO(gate-override-receipt): when commit attestation becomes
+                                // load-bearing for accountability, promote this log line to a
+                                // signed chain receipt. See design doc §4.3.
+                            }
                             matched.push(*skill);
                         }
                     }
@@ -488,6 +508,8 @@ mod tests {
                 },
                 credentials: vec![],
                 requires: GatingRequirements::default(),
+                disable_model_invocation: false,
+                user_invocable: true,
             },
             prompt_content: "Test prompt".to_string(),
             trust: SkillTrust::Trusted,
@@ -1239,5 +1261,120 @@ mod tests {
         );
         assert!(names.contains(&"parent-one"));
         assert!(names.contains(&"parent-two"));
+    }
+
+    // ───────────────────────────────────────────────────────────────────
+    // disable-model-invocation and user-invocable gate tests (§5.2)
+    // ───────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn prefilter_excludes_disable_model_invocation() {
+        let mut skill = make_skill("guarded", &["keyword"], &[], &[]);
+        skill.manifest.disable_model_invocation = true;
+        let skills = vec![skill];
+        let outcome =
+            prefilter_skills("keyword match", &skills, 5, MAX_SKILL_CONTEXT_TOKENS, &HashSet::new());
+        assert!(
+            outcome.selected.is_empty(),
+            "disable-model-invocation must block auto-fire"
+        );
+    }
+
+    #[test]
+    fn prefilter_does_not_affect_skills_without_flag() {
+        let skill = make_skill("normal", &["keyword"], &[], &[]);
+        let skills = vec![skill];
+        let outcome =
+            prefilter_skills("keyword match", &skills, 5, MAX_SKILL_CONTEXT_TOKENS, &HashSet::new());
+        assert_eq!(outcome.selected.len(), 1);
+    }
+
+    #[test]
+    fn extract_skill_mentions_ignores_disable_model_invocation() {
+        let mut skill = make_skill("guarded", &[], &[], &[]);
+        skill.manifest.disable_model_invocation = true;
+        let skills = vec![skill];
+        let (matched, _) = extract_skill_mentions("please /guarded help", &skills);
+        assert_eq!(
+            matched.len(),
+            1,
+            "explicit /mention must override disable-model-invocation"
+        );
+    }
+
+    #[test]
+    fn extract_skill_mentions_ignores_user_invocable_false() {
+        let mut skill = make_skill("reference", &[], &[], &[]);
+        skill.manifest.user_invocable = false;
+        let skills = vec![skill];
+        let (matched, _) = extract_skill_mentions("use /reference please", &skills);
+        assert_eq!(
+            matched.len(),
+            1,
+            "explicit /mention must override user-invocable=false"
+        );
+    }
+
+    #[test]
+    fn chain_load_ignores_disable_model_invocation() {
+        let mut child = make_skill("child", &[], &[], &[]);
+        child.manifest.disable_model_invocation = true;
+        let mut parent = make_skill_with_requires("parent", &["trigger"], &["child"]);
+        // Give the parent a score so it's selected; child has no keywords.
+        // chain-load must pull child in despite disable_model_invocation.
+        let skills = vec![parent.clone(), child];
+
+        let outcome = prefilter_skills(
+            "trigger word",
+            &skills,
+            5,
+            MAX_SKILL_CONTEXT_TOKENS,
+            &HashSet::new(),
+        );
+        let names: Vec<&str> = outcome.selected.iter().map(|s| s.name()).collect();
+        // Parent must be selected (scored on "trigger").
+        assert!(names.contains(&"parent"), "parent must be selected, got: {names:?}");
+        // Child must be chain-loaded — it's an explicit requires.skills reference.
+        assert!(
+            names.contains(&"child"),
+            "chain-loaded companion must not be blocked by disable-model-invocation, got: {names:?}"
+        );
+        let _ = parent; // suppress unused warning
+    }
+
+    #[test]
+    fn setup_marker_wins_when_combined_with_new_fields() {
+        let mut skill = make_skill("done-setup", &["any"], &[], &[]);
+        skill.manifest.activation.setup_marker = Some("done".into());
+        skill.manifest.disable_model_invocation = true;
+        skill.manifest.user_invocable = false;
+        let skills = vec![skill];
+        let mut satisfied = HashSet::new();
+        satisfied.insert("done".to_string());
+        let outcome = prefilter_skills("any text here", &skills, 5, MAX_SKILL_CONTEXT_TOKENS, &satisfied);
+        assert!(
+            outcome.selected.is_empty(),
+            "all three exclusion conditions compose cleanly"
+        );
+    }
+
+    #[test]
+    fn prefilter_runs_gates_before_scoring() {
+        // "strong" has a much higher score but is gated. "weak" has a low score
+        // but no gate. With max_candidates=1, if gates run after scoring then
+        // "strong" wins the slot and is then filtered out, leaving an empty result.
+        // Gates running before scoring means "weak" fills the slot.
+        let weak = make_skill("weak", &["trigger"], &[], &[]);
+        // strong: give it a pattern match for big score
+        let mut strong = make_skill("strong", &["trigger"], &[], &[r"(?i)\btrigger\b"]);
+        strong.manifest.disable_model_invocation = true;
+        let skills = vec![weak, strong];
+        let outcome = prefilter_skills("trigger", &skills, 1, MAX_SKILL_CONTEXT_TOKENS, &HashSet::new());
+        assert_eq!(outcome.selected.len(), 1, "gate-filter then top-N must yield exactly one skill");
+        assert_eq!(
+            outcome.selected[0].name(),
+            "weak",
+            "gate must filter before score-based top-N"
+        );
     }
 }

@@ -942,14 +942,15 @@ impl Agent {
         };
 
         let skills = guard.skills();
-        if skills.is_empty() {
+        let visible: Vec<_> = skills.iter().filter(|s| s.manifest.user_invocable).collect();
+        if visible.is_empty() {
             return Ok(SubmissionResult::response(
                 "No skills installed.\n\nUse /skills search <query> to find skills on ClawHub.",
             ));
         }
 
         let mut out = String::from("Installed skills:\n\n");
-        for s in skills {
+        for s in &visible {
             let desc = if s.manifest.description.chars().count() > 60 {
                 let truncated: String = s.manifest.description.chars().take(57).collect();
                 format!("{}...", truncated)

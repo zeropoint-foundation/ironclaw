@@ -161,10 +161,36 @@ pub struct SkillManifest {
     /// Gating requirements (binaries, env vars, config files, companion skills).
     #[serde(default)]
     pub requires: GatingRequirements,
+
+    /// When `true`, the model cannot auto-fire this skill on context match.
+    /// The skill is only loaded when the operator explicitly invokes it with
+    /// `/skill-name`. Defaults to `false` (auto-fire allowed), preserving
+    /// today's behavior for skills that omit the field.
+    ///
+    /// Use this for skills whose action has side effects the operator should
+    /// always intend explicitly (e.g. `commit`, where an auto-fire could
+    /// commit unintended changes).
+    #[serde(default, rename = "disable-model-invocation")]
+    pub disable_model_invocation: bool,
+
+    /// When `false`, the skill is hidden from operator-facing menus
+    /// (`/skills list`, the web skill list API). The skill is still loadable
+    /// when another skill references it via `requires.skills` or when the
+    /// operator explicitly invokes it with `/skill-name`. Defaults to `true`
+    /// (visible in menus), preserving today's behavior.
+    ///
+    /// Use this for methodology/reference skills that should not clutter the
+    /// operator menu but exist as composable knowledge for other skills.
+    #[serde(default = "default_user_invocable", rename = "user-invocable")]
+    pub user_invocable: bool,
 }
 
 fn default_version() -> String {
     "0.0.0".to_string()
+}
+
+fn default_user_invocable() -> bool {
+    true
 }
 
 /// Requirements that must be satisfied for a skill to load.
@@ -519,6 +545,8 @@ requires:
                 activation: ActivationCriteria::default(),
                 credentials: vec![],
                 requires: GatingRequirements::default(),
+                disable_model_invocation: false,
+                user_invocable: true,
             },
             prompt_content: "test prompt".to_string(),
             trust: SkillTrust::Trusted,
@@ -755,6 +783,37 @@ credentials:
         assert!(oauth.use_pkce);
         assert_eq!(oauth.extra_params.get("access_type").unwrap(), "offline");
         assert_eq!(oauth.extra_params.get("prompt").unwrap(), "consent");
+    }
+
+    #[test]
+    fn manifest_defaults_preserve_today_behavior() {
+        let yaml = "name: foo\ndescription: bar\n";
+        let m: SkillManifest = serde_yml::from_str(yaml).unwrap();
+        assert!(!m.disable_model_invocation);
+        assert!(m.user_invocable);
+    }
+
+    #[test]
+    fn manifest_parses_disable_model_invocation() {
+        let yaml = "name: foo\ndisable-model-invocation: true\n";
+        let m: SkillManifest = serde_yml::from_str(yaml).unwrap();
+        assert!(m.disable_model_invocation);
+        assert!(m.user_invocable);
+    }
+
+    #[test]
+    fn manifest_parses_user_invocable_false() {
+        let yaml = "name: foo\nuser-invocable: false\n";
+        let m: SkillManifest = serde_yml::from_str(yaml).unwrap();
+        assert!(!m.user_invocable);
+        assert!(!m.disable_model_invocation);
+    }
+
+    #[test]
+    fn manifest_rejects_string_for_disable_model_invocation() {
+        let yaml = "name: foo\ndisable-model-invocation: \"true\"\n";
+        let r: Result<SkillManifest, _> = serde_yml::from_str(yaml);
+        assert!(r.is_err(), "string for bool must fail");
     }
 
     #[test]

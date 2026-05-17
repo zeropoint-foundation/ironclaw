@@ -142,6 +142,8 @@ mod tests {
                 activation: ActivationCriteria::default(),
                 credentials: vec![],
                 requires: GatingRequirements::default(),
+                disable_model_invocation: false,
+                user_invocable: true,
             },
             prompt_content: "test".to_string(),
             trust,
