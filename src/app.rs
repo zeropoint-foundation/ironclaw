@@ -1168,25 +1168,44 @@ impl AppBuilder {
 
         // Register ZP cognition-governance hook if IRONCLAW_ZP_ENABLED=true.
         // No-op (not registered) for standalone runs.
+        //
+        // Authentication is per-request Genesis-signed envelopes (ZP-Sig).
+        // The signer is derived from the operator's Genesis secret via
+        // `bootstrap_gate_signer`; one ceremony per process, then every
+        // gate call signs in memory with no further sovereignty prompts.
         match crate::zp::ZpConfig::from_env() {
-            Ok(Some(zp_cfg)) => match crate::zp::ZpClient::new(&zp_cfg) {
-                Ok(client) => {
-                    let base_url = zp_cfg.base_url.clone();
-                    let hook = Arc::new(crate::zp::ZpHook::new(Arc::new(client)));
-                    hooks.register(hook).await;
-                    tracing::info!(
-                        base_url = %base_url,
-                        "ZP cognition-governance hook registered"
-                    );
+            Ok(Some(zp_cfg)) => {
+                let signer_result = crate::zp::bootstrap_gate_signer(&zp_cfg.genesis_record_path);
+                match signer_result {
+                    Ok(signer) => match crate::zp::ZpClient::new(&zp_cfg, signer) {
+                        Ok(client) => {
+                            let base_url = zp_cfg.base_url.clone();
+                            let kid_hex = client.kid_hex();
+                            let hook = Arc::new(crate::zp::ZpHook::new(Arc::new(client)));
+                            hooks.register(hook).await;
+                            tracing::info!(
+                                base_url = %base_url,
+                                kid = %kid_hex,
+                                "ZP cognition-governance hook registered"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "Failed to construct ZP client; cognition-governance disabled"
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            genesis = %zp_cfg.genesis_record_path.display(),
+                            "Failed to bootstrap ZP gate signer; cognition-governance disabled"
+                        );
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "Failed to construct ZP client; cognition-governance disabled"
-                    );
-                }
-            },
-            Ok(None) => {} // disabled — env var unset/false or token missing
+            }
+            Ok(None) => {} // disabled — env var unset/false
             Err(e) => {
                 tracing::warn!(
                     error = %e,

@@ -179,15 +179,29 @@ impl Hook for ZpHook {
                         }
                         Ok(HookOutcome::ok())
                     }
-                    Err(ZpError::Auth { status }) => {
-                        tracing::error!(
-                            status,
-                            "zp gate auth failed; refusing to dispatch ungoverned tool call"
-                        );
-                        self.disable();
+                    Err(e @ ZpError::Auth { .. }) => {
+                        let structural = e.is_structural_auth();
+                        let (status, reason) = match &e {
+                            ZpError::Auth { status, reason } => (*status, reason.clone()),
+                            _ => unreachable!(),
+                        };
+                        if structural {
+                            tracing::error!(
+                                status,
+                                reason = %reason,
+                                "zp gate envelope rejected (structural); disabling hook for session"
+                            );
+                            self.disable();
+                        } else {
+                            tracing::warn!(
+                                status,
+                                reason = %reason,
+                                "zp gate envelope rejected (transient — drift/replay); next request may succeed"
+                            );
+                        }
                         Ok(HookOutcome::reject(format!(
-                            "ZP gate authentication failed (status {status}). Cannot govern this tool call. \
-                             Re-onboard or refresh ZP_SESSION_TOKEN, then retry."
+                            "ZP gate rejected envelope (status {status}, X-Auth-Reason: {reason}). \
+                             Check Genesis derivation. Run `zp doctor` for diagnostics."
                         )))
                     }
                     Err(e) => {
@@ -243,13 +257,26 @@ impl Hook for ZpHook {
                     .await
                 {
                     Ok(()) => {}
-                    Err(ZpError::Auth { status }) => {
-                        tracing::warn!(
-                            status,
-                            "zp observation authentication failed; disabling \
-                             cognition-governance hook for this session"
-                        );
-                        self.disable();
+                    Err(e @ ZpError::Auth { .. }) => {
+                        let structural = e.is_structural_auth();
+                        let (status, reason) = match &e {
+                            ZpError::Auth { status, reason } => (*status, reason.clone()),
+                            _ => unreachable!(),
+                        };
+                        if structural {
+                            tracing::warn!(
+                                status,
+                                reason = %reason,
+                                "zp observation envelope rejected (structural); disabling hook for session"
+                            );
+                            self.disable();
+                        } else {
+                            tracing::debug!(
+                                status,
+                                reason = %reason,
+                                "zp observation envelope rejected (transient); not disabling"
+                            );
+                        }
                     }
                     Err(e) => {
                         tracing::debug!(error = %e, "zp observation emit failed; not blocking turn");

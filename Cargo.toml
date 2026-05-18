@@ -209,6 +209,18 @@ ed25519-dalek = { version = "2.2.0", features = ["std"] }
 bs58 = "0.5"
 hex = "0.4.3"
 
+# ZeroPoint substrate integration — Genesis-signed gate envelopes.
+# Path deps for in-tree development (APOLLO). The two crates live in the
+# `zeropoint` repo alongside IronClaw and are the canonical home for
+# (a) the `derive_gate_signer_seed` derivation and `load_sovereign_root`
+# loader (`zp-keys`) and (b) the `EnvelopeClaims` + header build/parse
+# helpers shared with the gate's verifier (`zp-gate-envelope`).
+# See zeropoint design doc
+# `docs/handoffs/genesis-signed-gate-requests-design-2026-05.md`.
+zp-keys = { path = "../zeropoint/crates/zp-keys", default-features = false, features = ["os-keychain"] }
+zp-gate-envelope = { path = "../zeropoint/crates/zp-gate-envelope" }
+zp-receipt = { path = "../zeropoint/crates/zp-receipt" }
+
 # OpenClaw import (feature gated)
 json5 = { version = "0.4", optional = true }
 

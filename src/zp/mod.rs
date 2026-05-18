@@ -25,3 +25,26 @@ pub mod hook;
 pub use client::{GateDecision, ZpClient, ZpError};
 pub use config::ZpConfig;
 pub use hook::ZpHook;
+
+use std::path::Path;
+use std::sync::Arc;
+
+use ed25519_dalek::SigningKey;
+
+/// Bootstrap the Genesis-derived gate signer.
+///
+/// Composes with zeropoint task #152 (singular sovereign root): loads the
+/// Genesis secret via `zp_keys::load_sovereign_root` (the canonical loader)
+/// and derives the gate-request signer seed via
+/// `zp_keys::derive_gate_signer_seed`. Same Genesis → same signer →
+/// same kid the substrate's gate verifier expects.
+///
+/// Returns a `ZpError::Transport` on failure with the underlying message,
+/// since callers surface the error into the same warn-log path as transport
+/// failures during ZpClient construction.
+pub fn bootstrap_gate_signer(genesis_record_path: &Path) -> Result<Arc<SigningKey>, ZpError> {
+    let genesis = zp_keys::load_sovereign_root(genesis_record_path)
+        .map_err(|e| ZpError::Transport(format!("load sovereign root: {}", e)))?;
+    let seed = zp_keys::derive_gate_signer_seed(genesis);
+    Ok(Arc::new(SigningKey::from_bytes(&seed)))
+}
