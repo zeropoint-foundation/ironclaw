@@ -2,6 +2,7 @@
 name: review-checklist
 version: 0.1.0
 description: Pre-merge review checklist based on recurring AI reviewer feedback patterns
+user-invocable: false
 activation:
   patterns:
     - "review.*checklist"

@@ -2,6 +2,7 @@
 name: routine-advisor
 version: 0.1.0
 description: Suggests relevant cron routines based on user context, goals, and observed patterns
+user-invocable: false
 activation:
   keywords:
     - every day

@@ -2,6 +2,7 @@
 name: coding
 version: "1.0.0"
 description: Best practices for code editing, search, and file operations
+user-invocable: false
 activation:
   keywords:
     - "code"
