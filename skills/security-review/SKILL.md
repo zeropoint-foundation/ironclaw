@@ -2,6 +2,7 @@
 name: security-review
 version: 0.1.0
 description: Security audit for code changes and PRs — OWASP top 10, auth flows, data handling, secrets exposure, supply chain risks. Writes findings as actionable items.
+disable-model-invocation: true
 activation:
   keywords:
     - security review

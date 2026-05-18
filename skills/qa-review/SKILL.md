@@ -2,6 +2,7 @@
 name: qa-review
 version: 0.1.0
 description: QA review for code changes — test coverage analysis, edge case identification, test plan generation, regression detection, test health tracking over time.
+disable-model-invocation: true
 activation:
   keywords:
     - QA review

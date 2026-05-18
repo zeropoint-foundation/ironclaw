@@ -2,6 +2,7 @@
 name: project-setup
 version: 0.1.0
 description: Add a GitHub repository as a tracked project — creates workspace entity, installs workflow automation missions, and includes in dev brief scope.
+disable-model-invocation: true
 activation:
   keywords:
     - add repo

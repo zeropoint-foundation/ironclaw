@@ -2,6 +2,7 @@
 name: code-review
 version: "2.0.0"
 description: Paranoid architect review of code changes for bugs, security, missing tests, and undocumented assumptions. Works on local git diffs OR a GitHub pull request (e.g. `owner/repo N`). For PRs, can post findings as line-level review comments.
+disable-model-invocation: true
 activation:
   keywords:
     - "review"

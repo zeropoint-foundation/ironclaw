@@ -2,6 +2,7 @@
 name: commit
 version: "1.0.0"
 description: Generate git commit messages from staged changes
+disable-model-invocation: true
 activation:
   keywords:
     - "commit"

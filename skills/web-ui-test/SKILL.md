@@ -2,6 +2,7 @@
 name: web-ui-test
 version: 0.1.0
 description: Test the IronClaw web UI using the Claude for Chrome browser extension.
+disable-model-invocation: true
 activation:
   keywords:
     - test web ui

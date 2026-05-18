@@ -2,6 +2,7 @@
 name: local-test
 version: 0.1.0
 description: Build, run, and test IronClaw locally using Docker containers and Chrome MCP browser automation.
+disable-model-invocation: true
 activation:
   keywords:
     - test locally

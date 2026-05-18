@@ -2,6 +2,7 @@
 name: github-workflow
 version: 0.1.0
 description: Install and operate a full GitHub issue-to-merge workflow for any repository using event-driven and cron missions. Handles issue planning, PR monitoring, CI fixing, staging review, and post-merge learning.
+disable-model-invocation: true
 activation:
   keywords:
     - github workflow
