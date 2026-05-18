@@ -8,7 +8,6 @@ activation:
     - "issues"
     - "pull request"
     - "repository"
-    - "commit"
     - "branch"
   exclude_keywords:
     - "gitlab"
