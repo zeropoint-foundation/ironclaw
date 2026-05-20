@@ -942,7 +942,10 @@ impl Agent {
         };
 
         let skills = guard.skills();
-        let visible: Vec<_> = skills.iter().filter(|s| s.manifest.user_invocable).collect();
+        let visible: Vec<_> = skills
+            .iter()
+            .filter(|s| s.manifest.user_invocable)
+            .collect();
         if visible.is_empty() {
             return Ok(SubmissionResult::response(
                 "No skills installed.\n\nUse /skills search <query> to find skills on ClawHub.",

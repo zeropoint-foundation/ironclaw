@@ -18,7 +18,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use zp_gate_envelope::{
-    body_hash_hex, build_header, random_nonce_b64, EnvelopeClaims, SCHEME_VERSION,
+    EnvelopeClaims, SCHEME_VERSION, body_hash_hex, build_header, random_nonce_b64,
 };
 use zp_receipt::Signable;
 
@@ -28,6 +28,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 const PATH_GATE_TOOL_CALL: &str = "/api/v1/gate/tool-call";
 const PATH_COGNITION_OBSERVE: &str = "/api/v1/cognition/observe";
+const PATH_AUDIT_RECEIPTS: &str = "/api/v1/audit/receipts";
 
 /// Errors emitted by [`ZpClient`].
 #[derive(Debug, thiserror::Error)]
@@ -211,6 +212,39 @@ impl ZpClient {
         let resp = Self::map_status(resp).await?;
         let decision = resp.json::<GateDecision>().await?;
         Ok(decision)
+    }
+
+    /// The base URL this client targets (e.g. `http://localhost:17010`).
+    /// Exposed so callers can surface it in error messages.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// `GET /api/v1/audit/receipts` — fetch normalized chain entries from the
+    /// local ZP gate. Returns the `receipts` array as raw JSON values using
+    /// the same schema as the foundation endpoint (`{id, claim, metadata,
+    /// created_at}`), so chain_render renders both sources identically.
+    pub async fn fetch_chain(
+        &self,
+        claim_pattern: &str,
+    ) -> Result<Vec<serde_json::Value>, ZpError> {
+        let path = format!(
+            "{}?claim_pattern={}",
+            PATH_AUDIT_RECEIPTS,
+            urlencoding::encode(claim_pattern)
+        );
+        let resp = self.signed_request(Method::GET, &path, vec![]).await?;
+        let resp = Self::map_status(resp).await?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ZpError::Transport(format!("chain response not valid JSON: {e}")))?;
+        let receipts = body
+            .get("receipts")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(receipts)
     }
 
     /// `POST /api/v1/cognition/observe`. Tier-1 heuristic path: sends the

@@ -1363,6 +1363,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires libsql_vector_idx extension (not compiled into local embedded SQLite; passes against Turso/libSQL server)"]
     async fn test_ensure_vector_index_enables_vector_search() {
         let (backend, _dir) = setup_backend().await;
 
@@ -1400,6 +1401,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires libsql_vector_idx extension (not compiled into local embedded SQLite; passes against Turso/libSQL server)"]
     async fn test_ensure_vector_index_dimension_change() {
         let (backend, _dir) = setup_backend().await;
 
@@ -1433,6 +1435,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires libsql_vector_idx extension (not compiled into local embedded SQLite; passes against Turso/libSQL server)"]
     async fn test_ensure_vector_index_noop_when_unchanged() {
         let (backend, _dir) = setup_backend().await;
 
@@ -1464,6 +1467,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires libsql_vector_idx extension (not compiled into local embedded SQLite; passes against Turso/libSQL server)"]
     async fn test_hybrid_search_returns_vector_results() {
         let (backend, _dir) = setup_backend().await;
 

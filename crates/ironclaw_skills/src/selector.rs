@@ -1272,8 +1272,13 @@ mod tests {
         let mut skill = make_skill("guarded", &["keyword"], &[], &[]);
         skill.manifest.disable_model_invocation = true;
         let skills = vec![skill];
-        let outcome =
-            prefilter_skills("keyword match", &skills, 5, MAX_SKILL_CONTEXT_TOKENS, &HashSet::new());
+        let outcome = prefilter_skills(
+            "keyword match",
+            &skills,
+            5,
+            MAX_SKILL_CONTEXT_TOKENS,
+            &HashSet::new(),
+        );
         assert!(
             outcome.selected.is_empty(),
             "disable-model-invocation must block auto-fire"
@@ -1284,8 +1289,13 @@ mod tests {
     fn prefilter_does_not_affect_skills_without_flag() {
         let skill = make_skill("normal", &["keyword"], &[], &[]);
         let skills = vec![skill];
-        let outcome =
-            prefilter_skills("keyword match", &skills, 5, MAX_SKILL_CONTEXT_TOKENS, &HashSet::new());
+        let outcome = prefilter_skills(
+            "keyword match",
+            &skills,
+            5,
+            MAX_SKILL_CONTEXT_TOKENS,
+            &HashSet::new(),
+        );
         assert_eq!(outcome.selected.len(), 1);
     }
 
@@ -1319,7 +1329,7 @@ mod tests {
     fn chain_load_ignores_disable_model_invocation() {
         let mut child = make_skill("child", &[], &[], &[]);
         child.manifest.disable_model_invocation = true;
-        let mut parent = make_skill_with_requires("parent", &["trigger"], &["child"]);
+        let parent = make_skill_with_requires("parent", &["trigger"], &["child"]);
         // Give the parent a score so it's selected; child has no keywords.
         // chain-load must pull child in despite disable_model_invocation.
         let skills = vec![parent.clone(), child];
@@ -1333,7 +1343,10 @@ mod tests {
         );
         let names: Vec<&str> = outcome.selected.iter().map(|s| s.name()).collect();
         // Parent must be selected (scored on "trigger").
-        assert!(names.contains(&"parent"), "parent must be selected, got: {names:?}");
+        assert!(
+            names.contains(&"parent"),
+            "parent must be selected, got: {names:?}"
+        );
         // Child must be chain-loaded — it's an explicit requires.skills reference.
         assert!(
             names.contains(&"child"),
@@ -1351,7 +1364,13 @@ mod tests {
         let skills = vec![skill];
         let mut satisfied = HashSet::new();
         satisfied.insert("done".to_string());
-        let outcome = prefilter_skills("any text here", &skills, 5, MAX_SKILL_CONTEXT_TOKENS, &satisfied);
+        let outcome = prefilter_skills(
+            "any text here",
+            &skills,
+            5,
+            MAX_SKILL_CONTEXT_TOKENS,
+            &satisfied,
+        );
         assert!(
             outcome.selected.is_empty(),
             "all three exclusion conditions compose cleanly"
@@ -1369,8 +1388,18 @@ mod tests {
         let mut strong = make_skill("strong", &["trigger"], &[], &[r"(?i)\btrigger\b"]);
         strong.manifest.disable_model_invocation = true;
         let skills = vec![weak, strong];
-        let outcome = prefilter_skills("trigger", &skills, 1, MAX_SKILL_CONTEXT_TOKENS, &HashSet::new());
-        assert_eq!(outcome.selected.len(), 1, "gate-filter then top-N must yield exactly one skill");
+        let outcome = prefilter_skills(
+            "trigger",
+            &skills,
+            1,
+            MAX_SKILL_CONTEXT_TOKENS,
+            &HashSet::new(),
+        );
+        assert_eq!(
+            outcome.selected.len(),
+            1,
+            "gate-filter then top-N must yield exactly one skill"
+        );
         assert_eq!(
             outcome.selected[0].name(),
             "weak",

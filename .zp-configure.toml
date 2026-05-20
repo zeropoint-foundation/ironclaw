@@ -113,6 +113,27 @@ env_vars = ["SANDBOX_ENABLED", "SANDBOX_POLICY", "SANDBOX_IMAGE"]
 defaults = { SANDBOX_ENABLED = "true", SANDBOX_POLICY = "readonly" }
 notes = "Docker-based sandboxed code execution. Config vars, not credentials."
 
+# ── ZeroPoint Foundation deployment — gateway auth ────────
+# These vars are Foundation-specific. CF Access OIDC was retired in #138;
+# the auth model is bearer token (GATEWAY_AUTH_TOKEN) + substrate-session
+# HMAC bridge (GATEWAY_SUBSTRATE_SESSION_*). OIDC vars must be absent or
+# false in vault — see ironclaw-deployment-unification-design-2026-05.md.
+
+[[optional]]
+capability = "foundation_gateway"
+env_vars = [
+  "GATEWAY_AUTH_TOKEN",
+  "GATEWAY_SUBSTRATE_SESSION_ENABLED",
+  "GATEWAY_SUBSTRATE_SESSION_KEY",
+  "GATEWAY_SUBSTRATE_SESSION_COOKIE_NAME",
+]
+notes = """
+GATEWAY_AUTH_TOKEN: bearer token for app.zeropointfoundation.org via Cloudflare
+Tunnel. Stored at tools/ironclaw/GATEWAY_AUTH_TOKEN in vault.
+GATEWAY_SUBSTRATE_SESSION_*: HMAC bridge for zp_session cookie verification (#138).
+GATEWAY_OIDC_ENABLED must be false or absent — CF Access retired in #138.
+"""
+
 # ── Auto-generatable secrets ───────────────────────────────
 # HTTP_WEBHOOK_SECRET removed from auto-generate per Foundation v1 deployment:
 # the HTTP webhook server channel is closed off entirely (see .env.example
