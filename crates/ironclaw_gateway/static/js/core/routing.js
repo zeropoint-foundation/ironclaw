@@ -149,6 +149,14 @@ let _lastSseEventId = null;
 // longer ones reload to catch missed events.
 let _sseDisconnectedAt = null;
 const SSE_RELOAD_THRESHOLD_MS = 10000;
+// Pending backoff timer between reconnect attempts. Tracked so it can be
+// cancelled by cleanupConnectionState() if connectSSE() is called early
+// (e.g. tab becomes visible again before the backoff fires).
+let _reconnectBackoffTimer = null;
+// Set to true when a disconnect happens while _pendingUserMessages is
+// non-empty. Cleared on the next successful onopen so a one-time warning
+// can be shown to the operator if history doesn't reflect the sent message.
+let _hadPendingOnDisconnect = false;
 
 // --- Turn Response Tracking State ---
 // Safety net for lost SSE response events (see #2079): tracks whether we
@@ -175,6 +183,7 @@ function cleanupConnectionState() {
   if (missionMappingRefreshTimer) { clearTimeout(missionMappingRefreshTimer); missionMappingRefreshTimer = null; }
   missionProgressRefreshScheduled = false;
   if (gatewayStatusInterval) { clearInterval(gatewayStatusInterval); gatewayStatusInterval = null; }
+  if (_reconnectBackoffTimer) { clearTimeout(_reconnectBackoffTimer); _reconnectBackoffTimer = null; }
 }
 
 // --- Send Cooldown State ---

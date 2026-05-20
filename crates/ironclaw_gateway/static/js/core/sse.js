@@ -61,6 +61,12 @@ function connectSSE(lastEventIdOverride) {
       setTimeout(() => { lostBanner.remove(); }, 2000);
     }
 
+    // Warn once if messages may have been lost during the disconnect.
+    if (_hadPendingOnDisconnect && sseHasConnectedBefore) {
+      addMessage('system', I18n.t('connection.messageNotReceived'));
+    }
+    _hadPendingOnDisconnect = false;
+
     // If we were restarting, close the modal and reset button now that server is back.
     // dismissRestartLoader() also clears the watchdog timer (#3082).
     if (isRestarting) {
@@ -95,27 +101,50 @@ function connectSSE(lastEventIdOverride) {
   eventSource.onerror = () => {
     _sseDisconnectedAt = _sseDisconnectedAt || Date.now();
     _reconnectAttempts++;
+
+    // Track in-flight messages at time of disconnect for post-reconnect warning.
+    if (!_hadPendingOnDisconnect && _pendingUserMessages.size > 0) {
+      _hadPendingOnDisconnect = true;
+    }
+
     document.getElementById('sse-dot').classList.add('disconnected');
     var statusEl2 = document.getElementById('sse-status');
     if (statusEl2) statusEl2.textContent = I18n.t('status.reconnecting');
 
-    // Update existing banner with attempt count
+    // Persistent failure: stop reconnecting after ~30s and surface a clear error.
+    const disconnectDuration = Date.now() - _sseDisconnectedAt;
+    if (disconnectDuration >= 30000) {
+      eventSource.close();
+      showConnectionBanner(I18n.t('connection.serverUnavailable'), 'error');
+      return;
+    }
+
+    // Update existing warning banner with current attempt count.
     const existingBanner = document.getElementById('connection-banner');
     if (existingBanner && existingBanner.classList.contains('connection-banner-warning')) {
       existingBanner.textContent = I18n.t('connection.reconnecting', { count: _reconnectAttempts });
     }
 
-    // Start connection-lost banner timer (3s delay)
+    // Start connection-lost banner timer (3s delay, first disconnect only).
     if (!_connectionLostTimer && !existingBanner) {
       _connectionLostTimer = setTimeout(() => {
         _connectionLostTimer = null;
-        // Only show if still disconnected
         const dot = document.getElementById('sse-dot');
         if (dot?.classList.contains('disconnected')) {
           showConnectionBanner(I18n.t('connection.reconnecting', { count: _reconnectAttempts }), 'warning');
         }
       }, 3000);
     }
+
+    // Exponential backoff: take control of reconnect timing from the browser.
+    // Sequence: 1s, 2s, 4s, 8s, capped at 15s. Close the current EventSource
+    // so the browser doesn't race our scheduled reconnect.
+    const delay = Math.min(1000 * Math.pow(2, _reconnectAttempts - 1), 15000);
+    eventSource.close();
+    _reconnectBackoffTimer = setTimeout(() => {
+      _reconnectBackoffTimer = null;
+      connectSSE();
+    }, delay);
   };
 
   // Forward all SSE events to registered widget handlers.

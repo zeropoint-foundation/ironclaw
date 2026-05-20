@@ -708,6 +708,8 @@ I18n.register('en', {
   'connection.disconnected': 'Disconnected — attempting to reconnect',
   'connection.reconnecting': 'Reconnecting (attempt {count})...',
   'connection.reconnected': 'Reconnected',
+  'connection.serverUnavailable': 'Server unavailable. Refresh the page to retry.',
+  'connection.messageNotReceived': 'Your last message may not have been received — please re-send if needed.',
 
   // Messages
   'message.you': 'You',
