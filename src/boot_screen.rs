@@ -39,6 +39,11 @@ pub struct BootInfo {
     /// summary in Tier 2 of the banner. `None` is the standalone-developer
     /// degenerate case (no gateway configured).
     pub auth: Option<AuthPosture>,
+    /// True when the ZP cognition-governance hook registered successfully.
+    /// Takes precedence over `auth` in the banner: shows `zp-sig (envelope)`
+    /// instead of the OIDC/bearer line so the operator sees the actual runtime
+    /// auth mode rather than the gateway-layer token posture.
+    pub zp_active: bool,
 }
 
 /// Resolved gateway auth posture for the boot banner and `status --runtime`.
@@ -240,7 +245,21 @@ pub fn print_boot_screen(info: &BootInfo) {
     // principle #6 from OBSERVABILITY-2026-05.md — the boot banner must
     // describe what is actually protecting the system, not just expose a
     // URL and trust the operator to know what's behind it.
-    if let Some(ref auth) = info.auth {
+    //
+    // ZP envelope takes precedence: when the cognition-governance hook is
+    // active, every gate call is authenticated via a Genesis-derived Ed25519
+    // envelope, making the gateway-layer bearer posture secondary context.
+    if info.zp_active {
+        println!(
+            "  {}{:<width$}{}  {}zp-sig (envelope){}",
+            fmt::dim(),
+            "auth",
+            fmt::reset(),
+            fmt::accent(),
+            fmt::reset(),
+            width = KW,
+        );
+    } else if let Some(ref auth) = info.auth {
         let gateway_token_env_set = std::env::var("GATEWAY_AUTH_TOKEN")
             .ok()
             .filter(|v| !v.is_empty())
@@ -469,6 +488,7 @@ mod tests {
             tunnel_provider: Some("ngrok".to_string()),
             startup_elapsed: None,
             auth: None,
+            zp_active: false,
         };
         // Should not panic
         print_boot_screen(&info);
@@ -501,6 +521,7 @@ mod tests {
             tunnel_provider: None,
             startup_elapsed: None,
             auth: None,
+            zp_active: false,
         };
         // Should not panic
         print_boot_screen(&info);
@@ -533,6 +554,7 @@ mod tests {
             tunnel_provider: None,
             startup_elapsed: None,
             auth: None,
+            zp_active: false,
         };
         // Should not panic
         print_boot_screen(&info);

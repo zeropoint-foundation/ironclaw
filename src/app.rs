@@ -78,6 +78,10 @@ pub struct AppComponents {
     /// Populated by the pairing flow (Task 8). Pre-allocated here so all
     /// subsystems can hold an `Arc` to the same cache instance.
     pub ownership_cache: Arc<crate::ownership::OwnershipCache>,
+    /// True when the ZP cognition-governance hook was successfully registered
+    /// at startup (IRONCLAW_ZP_ENABLED=true and signer bootstrapped).
+    /// Surfaced in the boot banner as `auth  zp-sig (envelope)`.
+    pub zp_active: bool,
 }
 
 /// Options that control optional init phases.
@@ -548,10 +552,9 @@ impl AppBuilder {
             tools.register_secrets_tools(Arc::clone(ss));
         }
 
-        // Chain-render tool — agent-rendered substrate UX PoC. Needs the
-        // primary LLM for live narration; does not depend on DB or workspace.
-        // See `docs/AGENTIC-SURFACE-2026-05.md`.
-        tools.register_chain_render_tool(Arc::clone(llm));
+        // chain_render is registered in build_all after the ZP gate client is
+        // available, so source=local can share the same signed ZpClient as the
+        // hook. See register_chain_render_tool call in build_all.
 
         // Create embeddings provider using the unified method
         let embeddings = self
@@ -1173,6 +1176,12 @@ impl AppBuilder {
         // The signer is derived from the operator's Genesis secret via
         // `bootstrap_gate_signer`; one ceremony per process, then every
         // gate call signs in memory with no further sovereignty prompts.
+        //
+        // The ZpClient is shared between the hook (governance decisions) and
+        // the chain_render tool (source=local chain queries). Both share the
+        // same Arc — one signer, two call sites.
+        let mut chain_render_zp_client: Option<Arc<crate::zp::ZpClient>> = None;
+        let mut zp_active = false;
         match crate::zp::ZpConfig::from_env() {
             Ok(Some(zp_cfg)) => {
                 let signer_result = crate::zp::bootstrap_gate_signer(&zp_cfg.genesis_record_path);
@@ -1180,9 +1189,12 @@ impl AppBuilder {
                     Ok(signer) => match crate::zp::ZpClient::new(&zp_cfg, signer) {
                         Ok(client) => {
                             let base_url = zp_cfg.base_url.clone();
+                            let client = Arc::new(client);
                             let kid_hex = client.kid_hex();
-                            let hook = Arc::new(crate::zp::ZpHook::new(Arc::new(client)));
+                            chain_render_zp_client = Some(Arc::clone(&client));
+                            let hook = Arc::new(crate::zp::ZpHook::new(client));
                             hooks.register(hook).await;
+                            zp_active = true;
                             tracing::info!(
                                 base_url = %base_url,
                                 kid = %kid_hex,
@@ -1213,6 +1225,12 @@ impl AppBuilder {
                 );
             }
         }
+
+        // Register chain_render now that the ZP gate client is resolved.
+        // chain_render needs the ZpClient for source=local; None is safe for
+        // standalone runs (the tool will surface a clear error if local source
+        // is requested without a configured gate).
+        tools.register_chain_render_tool(Arc::clone(&llm), chain_render_zp_client);
 
         let agent_session_manager =
             Arc::new(AgentSessionManager::new().with_hooks(Arc::clone(&hooks)));
@@ -1406,6 +1424,7 @@ impl AppBuilder {
             dev_loaded_tool_names,
             builder,
             ownership_cache,
+            zp_active,
         })
     }
 }

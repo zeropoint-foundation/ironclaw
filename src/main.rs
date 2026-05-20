@@ -1126,6 +1126,7 @@ async fn async_main() -> anyhow::Result<()> {
             tunnel_provider: active_tunnel.as_ref().map(|t| t.name().to_string()),
             startup_elapsed: Some(startup_start.elapsed()),
             auth: ironclaw::boot_screen::AuthPosture::from_config(&config),
+            zp_active: components.zp_active,
         };
         ironclaw::boot_screen::print_boot_screen(&boot_info);
     }
